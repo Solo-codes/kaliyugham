@@ -16,7 +16,7 @@ export function createEquipmentBelt(): EquipmentBelt {
 }
 export function buyEquipment(
   belt: EquipmentBelt,
-  wallet: { rupees: number },
+  wallet: { annas: number },
   kind: EquipmentKind,
   available: boolean,
   busy: boolean,
@@ -24,8 +24,8 @@ export function buyEquipment(
   if (busy) return "busy";
   if (!available) return "closed";
   if (belt.owned.includes(kind)) return "owned";
-  if (wallet.rupees < KALARI_GOODS[kind].price) return "no-money";
-  wallet.rupees -= KALARI_GOODS[kind].price;
+  if (wallet.annas < KALARI_GOODS[kind].price) return "no-money";
+  wallet.annas -= KALARI_GOODS[kind].price;
   belt.owned.push(kind);
   belt.selected = kind;
   return "purchased";

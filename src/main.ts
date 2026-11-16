@@ -160,11 +160,11 @@ import {
 
 document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
   <main class="game-shell">
-    <div id="world" aria-label="Kaliyugham 3D game world"></div>
+    <div id="world" aria-label="കലിയുഗം 3D game world"></div>
     <div class="world-vignette" aria-hidden="true"></div>
 
     <header class="topbar" aria-label="Game status">
-      <a class="wordmark" href="#" aria-label="കളിയുഗം — Kaliyugham home"><span class="brand-mark">✳</span> <span lang="ml">കളിയുഗം</span></a>
+      <a class="wordmark" href="#" aria-label="കലിയുഗം home"><span class="brand-mark">✳</span> <span lang="ml">കലിയുഗം</span></a>
       <div class="hud-center"><span class="live-dot"></span><span id="region-name">KERALA COUNTRYSIDE</span><span class="hud-divider">/</span><span id="time-of-day">08:00 · Morning</span><span class="hud-divider">/</span><span id="weather-status">Clear</span></div>
       <div class="top-actions"><button id="festival-sound" class="icon-button" aria-label="Enable festival percussion" title="Festival sound on/off">♪</button><label class="graphics-label">GRAPHICS<select id="graphics-quality" aria-label="Graphics quality"><option value="high">Realistic</option><option value="balanced">Balanced</option></select></label><button id="pause-button" class="icon-button" aria-label="Pause game" title="Pause (Escape)">Ⅱ</button></div>
     </header>
@@ -173,12 +173,12 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       <div class="map-card glass-card">
         <div class="map-heading"><span>FIELD MAP</span><span class="map-north">N</span></div>
         <canvas id="minimap" width="180" height="180" aria-label="Nearby terrain map; the red diamond marks the kalari"></canvas>
-        <div class="map-footer"><span class="map-dot"></span> <span id="fragment-count">STARLIGHT 0 / 8</span></div>
+        <div class="map-footer"><span class="map-dot"></span> <span id="fragment-count">COINS 0 / 8</span></div>
       </div>
     </section>
 
-    <div id="interaction-prompt" class="interaction-prompt" aria-live="polite"><kbd>E</kbd> Gather starlight</div>
-    <div class="market-status glass-card" aria-label="Wallet and food"><span id="wallet-status">₹20</span><span id="food-status">Visit the market · E to buy and enjoy</span></div>
+    <div id="interaction-prompt" class="interaction-prompt" aria-live="polite"><kbd>E</kbd> Collect coin</div>
+    <div class="market-status glass-card" aria-label="Wallet and food"><span id="wallet-status" aria-label="48 paise"><span id="wallet-amount">48 paise</span></span><span id="food-status">Visit the market · E to buy and enjoy</span></div>
     <div id="equipment-status" class="equipment-status">F · Equipment: none · R to use</div>
     <section id="shop-menu" class="shop-menu glass-card" aria-label="Shop menu" hidden>
       <h2 id="shop-title"></h2><div id="shop-options"></div><button id="close-shop">Close · E</button>
@@ -4846,7 +4846,7 @@ toddyShop.position.set(
 scene.add(toddyShop);
 translatedBoards.push({
   object: boardAnchor(toddyShop, 0, 2.3, -2.3),
-  english: "Toddy shop — toddy ₹2",
+  english: "Toddy shop — toddy costs 2 annas",
 });
 const toddyLane = closestRoad(...toddyShopSite);
 if (toddyLane) toddyShop.rotation.y = shopFacing(...toddyShopSite, toddyLane);
@@ -4937,8 +4937,8 @@ const makeShopSign = (text: string, stall: THREE.Group) => {
   stall.add(sign);
   const english: Record<string, string> = {
     "കളരി · ആയുധങ്ങൾ": "Kalari equipment — bow, sword and buckler",
-    "പഴം · ₹1": "Banana — ₹1",
-    "കരിക്കിൻ വെള്ളം · ₹2": "Tender coconut water — ₹2",
+    "പഴം · 1 അണ": "Banana — 1 anna",
+    "കരിക്കിൻ വെള്ളം · 2 അണ": "Tender coconut water — 2 annas",
     "പുതിയ മീൻ": "Fresh fish",
   };
   translatedBoards.push({ object: sign, english: english[text] ?? text });
@@ -4955,9 +4955,9 @@ marketStalls.forEach((stall, index) => {
   }
   makeShopSign(
     index === 0
-      ? "പഴം · ₹1"
+      ? "പഴം · 1 അണ"
       : index === 1
-        ? "കരിക്കിൻ വെള്ളം · ₹2"
+        ? "കരിക്കിൻ വെള്ളം · 2 അണ"
         : "പുതിയ മീൻ",
     stall,
   );
@@ -5373,41 +5373,88 @@ const relicPositions = [
   [-55, 2],
   [-12, 15],
 ];
-const relics: { group: THREE.Group; collected: boolean; phase: number }[] = [];
-const relicMaterial = new THREE.MeshStandardMaterial({
-  color: "#e6d5a4",
-  emissive: "#75e7d2",
-  emissiveIntensity: 1.4,
-  metalness: 0.24,
-  roughness: 0.25,
+const relics: {
+  group: THREE.Group;
+  collected: boolean;
+  phase: number;
+  light: THREE.PointLight;
+  motes: { mesh: THREE.Mesh; phase: number; radius: number }[];
+}[] = [];
+const coinFaceCanvas = document.createElement("canvas");
+coinFaceCanvas.width = coinFaceCanvas.height = 256;
+const coinFaceContext = coinFaceCanvas.getContext("2d")!;
+coinFaceContext.fillStyle = "#b9823c";
+coinFaceContext.fillRect(0, 0, 256, 256);
+coinFaceContext.strokeStyle = "#f0cf83";
+coinFaceContext.lineWidth = 8;
+coinFaceContext.beginPath();
+coinFaceContext.arc(128, 128, 112, 0, Math.PI * 2);
+coinFaceContext.stroke();
+coinFaceContext.lineWidth = 3;
+coinFaceContext.beginPath();
+coinFaceContext.arc(128, 128, 94, 0, Math.PI * 2);
+coinFaceContext.stroke();
+for (let mark = 0; mark < 16; mark++) {
+  const angle = (mark / 16) * Math.PI * 2;
+  coinFaceContext.beginPath();
+  coinFaceContext.arc(128 + Math.cos(angle) * 103, 128 + Math.sin(angle) * 103, 3, 0, Math.PI * 2);
+  coinFaceContext.fillStyle = "#f0cf83";
+  coinFaceContext.fill();
+}
+coinFaceContext.fillStyle = "#f5dda0";
+coinFaceContext.textAlign = "center";
+coinFaceContext.textBaseline = "middle";
+coinFaceContext.font = "bold 74px Georgia, serif";
+coinFaceContext.fillText("അണ", 128, 128);
+const coinFaceTexture = new THREE.CanvasTexture(coinFaceCanvas);
+coinFaceTexture.colorSpace = THREE.SRGBColorSpace;
+const coinMaterial = new THREE.MeshStandardMaterial({
+  color: "#c28a43",
+  metalness: 0.76,
+  roughness: 0.36,
+  map: coinFaceTexture,
+  emissive: "#3a230c",
+  emissiveIntensity: 0.18,
 });
-const ringMaterial = new THREE.MeshBasicMaterial({
-  color: "#b5f6df",
-  transparent: true,
-  opacity: 0.78,
-  side: THREE.DoubleSide,
+const coinEdgeMaterial = new THREE.MeshStandardMaterial({
+  color: "#8c5b28",
+  metalness: 0.7,
+  roughness: 0.48,
+});
+const fireflyGeometry = new THREE.SphereGeometry(0.035, 10, 8);
+const fireflyMaterial = new THREE.MeshBasicMaterial({
+  color: "#ffd27a",
+  toneMapped: false,
 });
 for (const [index, [x, z]] of relicPositions.entries()) {
   const group = new THREE.Group();
-  const crystal = new THREE.Mesh(
-    new THREE.OctahedronGeometry(0.42, 0),
-    relicMaterial,
+  const coin = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.34, 0.34, 0.075, 40),
+    [coinEdgeMaterial, coinMaterial, coinEdgeMaterial],
   );
-  crystal.rotation.z = Math.PI / 4;
-  crystal.castShadow = true;
-  group.add(crystal);
-  const halo = new THREE.Mesh(
-    new THREE.TorusGeometry(0.68, 0.018, 6, 32),
-    ringMaterial,
+  coin.rotation.x = Math.PI / 2;
+  coin.castShadow = true;
+  group.add(coin);
+  const rim = new THREE.Mesh(
+    new THREE.TorusGeometry(0.31, 0.018, 6, 40),
+    coinEdgeMaterial,
   );
-  halo.rotation.x = Math.PI / 2;
-  halo.position.y = -0.17;
-  group.add(halo);
-  const glow = new THREE.PointLight("#86f2d4", 1.25, 7, 2);
+  rim.position.z = 0.045;
+  group.add(rim);
+  const glow = new THREE.PointLight("#d4ae70", 0.42, 2.8, 2);
   group.add(glow);
-  group.position.set(x, terrainHeight(x, z) + 1.1, z);
+  const motes = Array.from({ length: 4 }, (_, moteIndex) => {
+    const mesh = new THREE.Mesh(fireflyGeometry, fireflyMaterial);
+    group.add(mesh);
+    return {
+      mesh,
+      phase: (moteIndex / 4) * Math.PI * 2 + index * 0.7,
+      radius: 0.43 + (moteIndex % 2) * 0.11,
+    };
+  });
+  group.position.set(x, terrainHeight(x, z) + 0.8, z);
   scene.add(group);
-  relics.push({ group, collected: false, phase: index * 0.95 });
+  relics.push({ group, collected: false, phase: index * 0.95, light: glow, motes });
 }
 
 const distantHillMaterial = new THREE.MeshStandardMaterial({
@@ -5666,7 +5713,7 @@ let lastMinimapUpdate = -Infinity;
 let nearbyVillager: Villager | undefined;
 let lastInteractionPrompt = "";
 const wallet: Wallet = {
-  rupees: 20,
+  annas: 12,
   bananasEaten: 0,
   coconutsDrunk: 0,
   teasDrunk: 0,
@@ -5745,7 +5792,9 @@ const nearestFoodShop = () => {
   return nearest;
 };
 const updateWallet = () => {
-  document.querySelector("#wallet-status")!.textContent = `₹${wallet.rupees}`;
+  const paise = wallet.annas * 4;
+  document.querySelector("#wallet-amount")!.textContent = `${paise} paise`;
+  document.querySelector("#wallet-status")!.setAttribute("aria-label", `${paise} paise`);
   world.dataset.wallet = JSON.stringify(wallet);
 };
 
@@ -5820,7 +5869,7 @@ const buyNearbyFood = (foodIndex?: number) => {
       `Enjoying ${FOOD[shop.kind].label}…`;
     updateWallet();
     setToast(
-      `Bought ${FOOD[shop.kind].label} for ₹${FOOD[shop.kind].price}. Enjoy!`,
+      `Bought ${FOOD[shop.kind].label} for ${FOOD[shop.kind].price} anna${FOOD[shop.kind].price === 1 ? "" : "s"}. Enjoy!`,
     );
   } else
     setToast(
@@ -5829,7 +5878,7 @@ const buyNearbyFood = (foodIndex?: number) => {
         : result === "sold-out"
           ? "Sold out for today. Fresh stock arrives tomorrow."
           : result === "no-money"
-            ? "Not enough rupees. Gather starlight to earn ₹5."
+            ? "Not enough annas. Collect a coin to earn 4 annas."
             : "Finish your food first.",
     );
   return true;
@@ -5970,7 +6019,7 @@ const purchaseKalari = (kind: EquipmentKind) => {
         : result === "closed"
           ? "The kalari merchant is unavailable. Visit during the day."
           : result === "no-money"
-            ? "Not enough rupees. Each starlight earns ₹5."
+            ? "Not enough annas. Each coin is worth 4 annas."
             : "Finish your food and dismount first.",
     );
 };
@@ -5998,13 +6047,13 @@ const showShop = (kind: "kalari" | "tea" | "toddy") => {
   if (kind === "kalari")
     for (const item of ["bow", "sword", "shield"] as const)
       addChoice(
-        `${KALARI_GOODS[item].label} · ₹${KALARI_GOODS[item].price}`,
+        `${KALARI_GOODS[item].label} · ${KALARI_GOODS[item].price} annas`,
         () => purchaseKalari(item),
       );
   else if (kind === "tea") {
-    addChoice("Chaya · Tea · ₹1", () => buyNearbyFood(2));
-    addChoice("Pazham pori · Banana fritter · ₹2", () => buyNearbyFood(3));
-  } else addChoice("Toddy · ₹2 · Temporary impairment", () => buyNearbyFood(4));
+    addChoice("Chaya · Tea · 1 anna", () => buyNearbyFood(2));
+    addChoice("Pazham pori · Banana fritter · 2 annas", () => buyNearbyFood(3));
+  } else addChoice("Toddy · 2 annas · Temporary impairment", () => buyNearbyFood(4));
 };
 document.querySelector("#close-shop")!.addEventListener("click", closeShop);
 
@@ -6021,18 +6070,18 @@ const collectNearby = () => {
   target.collected = true;
   target.group.visible = false;
   foundCount += 1;
-  wallet.rupees += 5;
+  wallet.annas += 4;
   updateWallet();
   document.querySelector<HTMLSpanElement>("#fragment-count")!.textContent =
-    `STARLIGHT ${foundCount} / 8`;
+    `COINS ${foundCount} / 8`;
   setToast(
     foundCount === relics.length
-      ? "The whole sky is yours again. ✦"
-      : "A little more starlight found. ✦",
+      ? "All eight old coins collected."
+      : "You found an old coin worth 4 annas.",
   );
   if (foundCount === relics.length)
     document.querySelector<HTMLDivElement>("#region-name")!.textContent =
-      "STARFALL GLADE";
+      "COIN GROVE";
   return true;
 };
 
@@ -7675,7 +7724,7 @@ const animate = () => {
     const shopNearby = nearestFoodShop();
     const shoppingPrompt = shopNearby
       ? marketSellers[shopNearby.index].working && isWorkday(dayState.hour)
-        ? `<kbd>E</kbd> Buy ${FOOD[shops[shopNearby.index].kind].label} · ₹${FOOD[shops[shopNearby.index].kind].price}`
+        ? `<kbd>E</kbd> Buy ${FOOD[shops[shopNearby.index].kind].label} · ${FOOD[shops[shopNearby.index].kind].price} anna${FOOD[shops[shopNearby.index].kind].price === 1 ? "" : "s"}`
         : "Market closed · Sellers return at 06:00"
       : "";
     const specialShop = nearbyKalariShop()
@@ -7704,14 +7753,14 @@ const animate = () => {
               : playerState.swimming
                 ? "<kbd>WASD</kbd> Swim <kbd>SPACE</kbd> Rise"
                 : nearestRelic
-                  ? "<kbd>E</kbd> Gather starlight"
+                  ? "<kbd>E</kbd> Collect old coin"
                   : nearbyVillager
                     ? `<kbd>E</kbd> Talk with ${nearbyVillager.name}`
                     : nearHeritage
                       ? "<kbd>E</kbd> Talk about work and village life"
                       : nearTemple
                         ? "ക്ഷേത്രം · Temple courtyard and flower offerings"
-                        : "<kbd>E</kbd> Gather starlight";
+                      : "<kbd>E</kbd> Collect old coin";
     if (prompt !== lastInteractionPrompt) {
       interactionPrompt.innerHTML = prompt;
       lastInteractionPrompt = prompt;
@@ -9216,9 +9265,21 @@ const animate = () => {
     if (!relic.collected) {
       relic.group.position.y =
         terrainHeight(relic.group.position.x, relic.group.position.z) +
-        1.1 +
+        0.8 +
         Math.sin(elapsed * 1.7 + relic.phase) * 0.16;
       relic.group.rotation.y = elapsed * 0.55 + relic.phase;
+      const pulse = 0.9 + (Math.sin(elapsed * 1.5 + relic.phase) + 1) * 0.12;
+      relic.light.intensity = 0.28 + pulse * 0.16;
+      for (const mote of relic.motes) {
+        const angle = elapsed * 0.65 + mote.phase;
+        mote.mesh.position.set(
+          Math.cos(angle) * mote.radius,
+          Math.sin(elapsed * 1.1 + mote.phase) * 0.19,
+          Math.sin(angle) * mote.radius,
+        );
+        const twinkle = 0.75 + (Math.sin(elapsed * 3 + mote.phase) + 1) * 0.3;
+        mote.mesh.scale.setScalar(twinkle);
+      }
     }
   }
   const shopDay = simulationDay(simulationTime);

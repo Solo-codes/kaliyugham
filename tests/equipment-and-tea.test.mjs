@@ -30,16 +30,16 @@ import {
 
 test("kalari purchases deduct once, equip the item, and F cycles only owned equipment", () => {
   const belt = createEquipmentBelt(),
-    wallet = { rupees: 20 };
+    wallet = { annas: 20 };
   assert.equal(cycleEquipment(belt), "none");
   assert.equal(buyEquipment(belt, wallet, "bow", true, false), "purchased");
-  assert.equal(wallet.rupees, 12);
+  assert.equal(wallet.annas, 12);
   assert.equal(belt.selected, "bow");
   assert.equal(buyEquipment(belt, wallet, "bow", true, false), "owned");
-  assert.equal(wallet.rupees, 12);
+  assert.equal(wallet.annas, 12);
   assert.equal(buyEquipment(belt, wallet, "sword", true, false), "purchased");
   assert.equal(buyEquipment(belt, wallet, "shield", true, false), "purchased");
-  assert.equal(wallet.rupees, 1);
+  assert.equal(wallet.annas, 1);
   assert.equal(cycleEquipment(belt), "none");
   assert.equal(cycleEquipment(belt), "bow");
   assert.equal(cycleEquipment(belt), "sword");
@@ -47,17 +47,17 @@ test("kalari purchases deduct once, equip the item, and F cycles only owned equi
 });
 test("closed, busy, and unaffordable equipment purchases do not change the belt or wallet", () => {
   const belt = createEquipmentBelt(),
-    wallet = { rupees: 0 };
+    wallet = { annas: 0 };
   assert.equal(buyEquipment(belt, wallet, "bow", false, false), "closed");
   assert.equal(buyEquipment(belt, wallet, "sword", true, true), "busy");
   assert.equal(buyEquipment(belt, wallet, "shield", true, false), "no-money");
-  assert.equal(wallet.rupees, 0);
+  assert.equal(wallet.annas, 0);
   assert.deepEqual(belt.owned, []);
 });
 test("equipment use has pause-safe cooldowns and directional non-damaging reach", () => {
   const belt = createEquipmentBelt();
   assert.equal(useEquipment(belt, true), false);
-  buyEquipment(belt, { rupees: 10 }, "bow", true, false);
+  buyEquipment(belt, { annas: 10 }, "bow", true, false);
   assert.equal(useEquipment(belt, false), false);
   assert.equal(useEquipment(belt, true), true);
   assert.equal(useEquipment(belt, true), false);
@@ -73,16 +73,16 @@ test("equipment use has pause-safe cooldowns and directional non-damaging reach"
   assert.equal(inEquipmentReach("shield", 1, 1), false);
 });
 test("tea and snacks have independent costs, stock, and completion counters", () => {
-  const wallet = { rupees: 5, bananasEaten: 0, coconutsDrunk: 0 };
+  const wallet = { annas: 5, bananasEaten: 0, coconutsDrunk: 0 };
   const tea = { kind: "tea", stock: 2 },
     snack = { kind: "snack", stock: 2 };
   assert.equal(purchaseFood(wallet, tea, true, 2, false), "purchased");
-  assert.equal(wallet.rupees, 4);
+  assert.equal(wallet.annas, 4);
   assert.equal(tea.stock, 1);
   finishFood(wallet, "tea");
   assert.equal(wallet.teasDrunk, 1);
   assert.equal(purchaseFood(wallet, snack, true, 2, false), "purchased");
-  assert.equal(wallet.rupees, 2);
+  assert.equal(wallet.annas, 2);
   finishFood(wallet, "snack");
   assert.equal(wallet.snacksEaten, 1);
   assert.equal(wallet.bananasEaten, 0);

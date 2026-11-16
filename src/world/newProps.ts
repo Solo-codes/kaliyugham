@@ -225,7 +225,7 @@ export function makeTeaShop(shopType: "tea" | "toddy" = "tea") {
   context.fillText(shopType === "tea" ? "ചായക്കട" : "കള്ളുഷാപ്പ്", 320, 58);
   context.font = "26px sans-serif";
   context.fillText(
-    shopType === "tea" ? "ചായ · പഴംപൊരി" : "കള്ള് · ₹2",
+    shopType === "tea" ? "ചായ · പഴംപൊരി" : "കള്ള് · 2 അണ",
     320,
     103,
   );
