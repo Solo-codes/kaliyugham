@@ -816,7 +816,7 @@ kbd {
   }
 }
 
-@media (max-width: 760px) and (pointer: coarse) {
+@media (pointer: coarse) {
   .bottom-bar {
     display: none;
   }
@@ -841,15 +841,41 @@ kbd {
     user-select: none;
     -webkit-user-select: none;
   }
-  .mobile-dpad,
   .mobile-action-pad {
     display: grid;
     gap: 3px;
     pointer-events: auto;
   }
-  .mobile-dpad {
-    grid-template-columns: repeat(3, 48px);
-    grid-template-rows: repeat(3, 48px);
+  .mobile-joystick {
+    display: grid;
+    width: 148px;
+    height: 148px;
+    place-items: center;
+    border-radius: 50%;
+    pointer-events: auto;
+    touch-action: none;
+  }
+  .joystick-ring {
+    display: grid;
+    width: 138px;
+    height: 138px;
+    place-items: center;
+    border: 1px solid rgba(237, 216, 165, 0.36);
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(72, 83, 64, 0.3), rgba(21, 32, 27, 0.58));
+    box-shadow: inset 0 2px 9px #101a1470, 0 3px 12px #0a120d3d;
+    backdrop-filter: blur(5px);
+  }
+  .joystick-knob {
+    width: 58px;
+    height: 58px;
+    border: 1px solid rgba(248, 226, 174, 0.66);
+    border-radius: 50%;
+    background: radial-gradient(circle at 34% 28%, #9c9c6c, #5b684b 65%, #344438);
+    box-shadow: inset 0 2px 4px #f7e7b44d, 0 3px 8px #0006;
+    transition: transform 65ms ease-out;
+    will-change: transform;
+    pointer-events: none;
   }
   .mobile-action-pad {
     grid-template-columns: repeat(2, 50px);
@@ -871,22 +897,12 @@ kbd {
     -webkit-tap-highlight-color: transparent;
     touch-action: none;
   }
-  .mobile-dpad button {
-    border-radius: 17px;
-    background: rgba(35, 49, 40, 0.72);
-    font-size: 17px;
-  }
   .mobile-controls button.pressed,
-  .mobile-controls button:active {
+  .mobile-controls button:active,
+  .mobile-joystick.pressed .joystick-knob {
     color: #fff7dc;
     background: rgba(118, 103, 61, 0.92);
     transform: scale(0.96);
-  }
-  .dpad-center {
-    margin: 6px;
-    border: 1px solid rgba(237, 216, 165, 0.2);
-    border-radius: 50%;
-    background: rgba(33, 45, 37, 0.34);
   }
 }
 

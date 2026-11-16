@@ -71,5 +71,6 @@ The `Deploy to GitHub Pages` workflow builds the site and publishes it whenever 
 - **Drag the scene** — rotate the camera
 - **E** — buy and consume food at a nearby staffed stall, collect an old coin, or talk with a villager
 - **Escape** or the pause button — pause / resume
+- **Touchscreens** — use the virtual joystick to move and the on-screen buttons to jump, interact, ride, run, cycle gear, and use equipment; drag the scene to rotate the camera.
 
 The game is playable on desktop and mobile browsers. A WebGL-capable browser is required.

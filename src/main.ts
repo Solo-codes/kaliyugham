@@ -201,10 +201,8 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
     </footer>
 
     <div id="mobile-controls" class="mobile-controls" aria-label="Touch game controls">
-      <div class="mobile-dpad" aria-label="Move">
-        <span></span><button type="button" data-hold-key="w" aria-label="Move forward">▲</button><span></span>
-        <button type="button" data-hold-key="a" aria-label="Move left">◀</button><span class="dpad-center" aria-hidden="true"></span><button type="button" data-hold-key="d" aria-label="Move right">▶</button>
-        <span></span><button type="button" data-hold-key="s" aria-label="Move back">▼</button><span></span>
+      <div class="mobile-joystick" role="application" aria-label="Virtual joystick for movement">
+        <div class="joystick-ring"><div class="joystick-knob"></div></div>
       </div>
       <div class="mobile-action-pad" aria-label="Actions">
         <button type="button" data-tap-key="space" aria-label="Jump">Jump</button>
@@ -5592,6 +5590,7 @@ const portableLightPool = Array.from({ length: 4 }, () => {
   return light;
 });
 const keys = new Set<string>();
+let handleKeyDown: (event: KeyboardEvent) => void = () => {};
 const mobileControls = document.querySelector<HTMLDivElement>("#mobile-controls")!;
 mobileControls
   .querySelectorAll<HTMLButtonElement>("[data-hold-key]")
@@ -5612,16 +5611,69 @@ mobileControls
     button.addEventListener("pointercancel", release);
     button.addEventListener("lostpointercapture", release);
   });
+const joystick = mobileControls.querySelector<HTMLDivElement>(".mobile-joystick")!;
+const joystickKnob = joystick.querySelector<HTMLDivElement>(".joystick-knob")!;
+let joystickPointer: number | undefined;
+let joystickKeys = new Set<string>();
+const updateJoystick = (clientX: number, clientY: number) => {
+  const bounds = joystick.getBoundingClientRect();
+  const centerX = bounds.left + bounds.width / 2;
+  const centerY = bounds.top + bounds.height / 2;
+  let dx = clientX - centerX;
+  let dy = clientY - centerY;
+  const radius = bounds.width * 0.31;
+  const distance = Math.hypot(dx, dy);
+  if (distance > radius) {
+    dx = (dx / distance) * radius;
+    dy = (dy / distance) * radius;
+  }
+  joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+  const normalizedX = dx / radius;
+  const normalizedY = dy / radius;
+  const nextKeys = new Set<string>();
+  if (normalizedY < -0.22) nextKeys.add("w");
+  if (normalizedY > 0.22) nextKeys.add("s");
+  if (normalizedX < -0.22) nextKeys.add("a");
+  if (normalizedX > 0.22) nextKeys.add("d");
+  for (const key of joystickKeys) if (!nextKeys.has(key)) keys.delete(key);
+  for (const key of nextKeys) keys.add(key);
+  joystickKeys = nextKeys;
+};
+const releaseJoystick = () => {
+  for (const key of joystickKeys) keys.delete(key);
+  joystickKeys.clear();
+  joystickPointer = undefined;
+  joystickKnob.style.transform = "translate(0, 0)";
+  joystick.classList.remove("pressed");
+};
+joystick.addEventListener("pointerdown", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  joystickPointer = event.pointerId;
+  joystick.classList.add("pressed");
+  joystick.setPointerCapture(event.pointerId);
+  updateJoystick(event.clientX, event.clientY);
+});
+joystick.addEventListener("pointermove", (event) => {
+  if (event.pointerId === joystickPointer)
+    updateJoystick(event.clientX, event.clientY);
+});
+joystick.addEventListener("pointerup", releaseJoystick);
+joystick.addEventListener("pointercancel", releaseJoystick);
+joystick.addEventListener("lostpointercapture", releaseJoystick);
 mobileControls
   .querySelectorAll<HTMLButtonElement>("[data-tap-key]")
   .forEach((button) => {
-    button.addEventListener("click", (event) => {
+    const key = (button.dataset.tapKey === "space" ? " " : button.dataset.tapKey)!;
+    const press = (event: Event) => {
       event.preventDefault();
       event.stopPropagation();
-      const label = button.dataset.tapKey!;
-      const key = label === "space" ? " " : label;
-      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-      window.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+      handleKeyDown(new KeyboardEvent("keydown", { key }));
+      window.setTimeout(() => keys.delete(key.toLowerCase()), key === " " ? 140 : 0);
+    };
+    button.addEventListener("pointerdown", press);
+    button.addEventListener("click", (event) => {
+      if (event.detail === 0) press(event);
     });
   });
 let yaw = 0.22;
@@ -6213,7 +6265,7 @@ document
   .querySelector<HTMLButtonElement>("#pause-button")!
   .addEventListener("click", togglePause);
 
-window.addEventListener("keydown", (event) => {
+handleKeyDown = (event) => {
   const key = event.key.toLowerCase();
   if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(key))
     event.preventDefault();
@@ -6340,7 +6392,8 @@ window.addEventListener("keydown", (event) => {
     else if (!buyNearbyFood() && !consuming && !collectNearby())
       talkNearbyVillager();
   }
-});
+};
+window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", (event) =>
   keys.delete(event.key.toLowerCase()),
 );
