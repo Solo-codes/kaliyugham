@@ -658,6 +658,9 @@ kbd {
 .shop-menu[hidden] {
   display: none;
 }
+.mobile-controls {
+  display: none;
+}
 .shop-menu h2 {
   margin: 0 0 18px;
   font-family: Georgia, serif;
@@ -810,6 +813,80 @@ kbd {
   }
   .welcome-meta {
     font-size: 6px;
+  }
+}
+
+@media (max-width: 760px) and (pointer: coarse) {
+  .bottom-bar {
+    display: none;
+  }
+  .game-hud {
+    right: 12px;
+    bottom: 174px;
+  }
+  .interaction-prompt {
+    bottom: 174px;
+  }
+  .mobile-controls.active {
+    position: absolute;
+    z-index: 7;
+    right: 12px;
+    bottom: max(10px, env(safe-area-inset-bottom));
+    left: 12px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    pointer-events: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .mobile-dpad,
+  .mobile-action-pad {
+    display: grid;
+    gap: 3px;
+    pointer-events: auto;
+  }
+  .mobile-dpad {
+    grid-template-columns: repeat(3, 48px);
+    grid-template-rows: repeat(3, 48px);
+  }
+  .mobile-action-pad {
+    grid-template-columns: repeat(2, 50px);
+    grid-template-rows: repeat(3, 48px);
+  }
+  .mobile-controls button {
+    display: grid;
+    min-width: 0;
+    min-height: 0;
+    place-items: center;
+    padding: 0;
+    border: 1px solid rgba(237, 216, 165, 0.48);
+    border-radius: 15px;
+    color: #f7edcf;
+    background: rgba(33, 45, 37, 0.78);
+    box-shadow: 0 3px 12px rgba(10, 18, 13, 0.24);
+    backdrop-filter: blur(7px);
+    font: 700 12px/1 Inter, system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: none;
+  }
+  .mobile-dpad button {
+    border-radius: 17px;
+    background: rgba(35, 49, 40, 0.72);
+    font-size: 17px;
+  }
+  .mobile-controls button.pressed,
+  .mobile-controls button:active {
+    color: #fff7dc;
+    background: rgba(118, 103, 61, 0.92);
+    transform: scale(0.96);
+  }
+  .dpad-center {
+    margin: 6px;
+    border: 1px solid rgba(237, 216, 165, 0.2);
+    border-radius: 50%;
+    background: rgba(33, 45, 37, 0.34);
   }
 }
 

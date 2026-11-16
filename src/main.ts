@@ -200,6 +200,22 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
       <div class="coordinates"><span class="coordinates-label">YOUR POSITION</span><span id="coordinates">000 · 000</span></div>
     </footer>
 
+    <div id="mobile-controls" class="mobile-controls" aria-label="Touch game controls">
+      <div class="mobile-dpad" aria-label="Move">
+        <span></span><button type="button" data-hold-key="w" aria-label="Move forward">▲</button><span></span>
+        <button type="button" data-hold-key="a" aria-label="Move left">◀</button><span class="dpad-center" aria-hidden="true"></span><button type="button" data-hold-key="d" aria-label="Move right">▶</button>
+        <span></span><button type="button" data-hold-key="s" aria-label="Move back">▼</button><span></span>
+      </div>
+      <div class="mobile-action-pad" aria-label="Actions">
+        <button type="button" data-tap-key="space" aria-label="Jump">Jump</button>
+        <button type="button" data-tap-key="e" aria-label="Interact">Act</button>
+        <button type="button" data-tap-key="q" aria-label="Call or mount horse">Horse</button>
+        <button type="button" data-hold-key="shift" aria-label="Jog or gallop">Run</button>
+        <button type="button" data-tap-key="f" aria-label="Cycle equipment">Gear</button>
+        <button type="button" data-tap-key="r" aria-label="Use equipment">Use</button>
+      </div>
+    </div>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
   </main>
 `;
@@ -5576,6 +5592,38 @@ const portableLightPool = Array.from({ length: 4 }, () => {
   return light;
 });
 const keys = new Set<string>();
+const mobileControls = document.querySelector<HTMLDivElement>("#mobile-controls")!;
+mobileControls
+  .querySelectorAll<HTMLButtonElement>("[data-hold-key]")
+  .forEach((button) => {
+    const key = button.dataset.holdKey!;
+    button.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      keys.add(key);
+      button.classList.add("pressed");
+      button.setPointerCapture(event.pointerId);
+    });
+    const release = () => {
+      keys.delete(key);
+      button.classList.remove("pressed");
+    };
+    button.addEventListener("pointerup", release);
+    button.addEventListener("pointercancel", release);
+    button.addEventListener("lostpointercapture", release);
+  });
+mobileControls
+  .querySelectorAll<HTMLButtonElement>("[data-tap-key]")
+  .forEach((button) => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const label = button.dataset.tapKey!;
+      const key = label === "space" ? " " : label;
+      window.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
+      window.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
+    });
+  });
 let yaw = 0.22;
 let pitch = 0.29;
 let dragging = false;
@@ -5734,9 +5782,16 @@ for (const kind of ["bow", "sword", "shield"] as const) {
 }
 let openShop: "kalari" | "tea" | "toddy" | undefined;
 const shopMenu = document.querySelector<HTMLElement>("#shop-menu")!;
+const syncMobileControls = () => {
+  mobileControls.classList.toggle(
+    "active",
+    gameStarted && !paused && !openShop,
+  );
+};
 const closeShop = () => {
   openShop = undefined;
   shopMenu.hidden = true;
+  syncMobileControls();
 };
 let consuming: { kind: FoodKind; remaining: number } | undefined;
 let lastShopDay = 0;
@@ -6025,6 +6080,7 @@ const purchaseKalari = (kind: EquipmentKind) => {
 };
 const showShop = (kind: "kalari" | "tea" | "toddy") => {
   openShop = kind;
+  syncMobileControls();
   shopMenu.hidden = false;
   keys.clear();
   document.querySelector("#shop-title")!.textContent =
@@ -6128,6 +6184,7 @@ document
       .querySelector<HTMLDivElement>(".game-hud")!
       .classList.add("active");
     document.querySelector<HTMLElement>(".bottom-bar")!.classList.add("active");
+    syncMobileControls();
     setToast("Follow the lanes. The red diamond marks the kalari.");
   });
 
@@ -6135,6 +6192,7 @@ const togglePause = () => {
   if (!gameStarted) return;
   closeShop();
   paused = !paused;
+  syncMobileControls();
   welcomeScreen.classList.toggle("hidden", !paused);
   welcomeScreen.classList.toggle("paused", paused);
   const title = welcomeScreen.querySelector("h1")!;
