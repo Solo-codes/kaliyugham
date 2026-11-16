@@ -822,10 +822,10 @@ kbd {
   }
   .game-hud {
     right: 12px;
-    bottom: 174px;
+    bottom: 220px;
   }
   .interaction-prompt {
-    bottom: 174px;
+    bottom: 184px;
   }
   .mobile-controls.active {
     position: absolute;
@@ -879,6 +879,7 @@ kbd {
   }
   .mobile-action-pad {
     grid-template-columns: repeat(2, 50px);
+    grid-auto-rows: 48px;
     grid-template-rows: repeat(3, 48px);
   }
   .mobile-controls button {
@@ -886,6 +887,9 @@ kbd {
     min-width: 0;
     min-height: 0;
     place-items: center;
+    align-content: center;
+    grid-template-rows: auto auto;
+    gap: 2px;
     padding: 0;
     border: 1px solid rgba(237, 216, 165, 0.48);
     border-radius: 15px;
@@ -897,12 +901,48 @@ kbd {
     -webkit-tap-highlight-color: transparent;
     touch-action: none;
   }
+  .mobile-controls button[hidden] {
+    display: none;
+  }
+  .mobile-controls button kbd {
+    padding: 0;
+    border: 0;
+    color: #fff0c6;
+    background: transparent;
+    box-shadow: none;
+    font: 800 11px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.02em;
+  }
+  .mobile-controls button span {
+    color: rgba(246, 237, 211, 0.82);
+    font: 700 7px/1 Inter, system-ui, sans-serif;
+    letter-spacing: 0.06em;
+  }
   .mobile-controls button.pressed,
   .mobile-controls button:active,
   .mobile-joystick.pressed .joystick-knob {
     color: #fff7dc;
     background: rgba(118, 103, 61, 0.92);
     transform: scale(0.96);
+  }
+}
+
+@media (pointer: coarse) and (max-height: 500px) {
+  .game-hud {
+    top: 82px;
+    right: 12px;
+    bottom: auto;
+  }
+  .map-card {
+    width: 88px;
+    padding: 5px;
+  }
+  #minimap {
+    width: 66px;
+    height: 66px;
+  }
+  .interaction-prompt {
+    bottom: 208px;
   }
 }
 
