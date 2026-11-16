@@ -623,6 +623,9 @@ kbd {
   pointer-events: none;
 }
 #wallet-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: #f0d79c;
   font-weight: 700;
   white-space: nowrap;

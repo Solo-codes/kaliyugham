@@ -7,7 +7,7 @@ export const FOOD = {
   toddy: { label: "toddy", price: 2, duration: 3 },
 } as const;
 export type Wallet = {
-  rupees: number;
+  annas: number;
   bananasEaten: number;
   coconutsDrunk: number;
   teasDrunk?: number;
@@ -25,8 +25,8 @@ export function purchaseFood(
   if (busy) return "busy";
   if (!sellerPresent || distance > 3.4) return "closed";
   if (shop.stock <= 0) return "sold-out";
-  if (wallet.rupees < FOOD[shop.kind].price) return "no-money";
-  wallet.rupees -= FOOD[shop.kind].price;
+  if (wallet.annas < FOOD[shop.kind].price) return "no-money";
+  wallet.annas -= FOOD[shop.kind].price;
   shop.stock--;
   return "purchased";
 }

@@ -37,16 +37,16 @@ test("employees queue at evening, are paid in order once, then go home", () => {
   assert.ok(visits.every((v) => v.stage === "working"));
 });
 test("toddy is purchased with stock and money rules, with a separate consumption count", () => {
-  const wallet = { rupees: 5, bananasEaten: 0, coconutsDrunk: 0 };
+  const wallet = { annas: 5, bananasEaten: 0, coconutsDrunk: 0 };
   const shop = { kind: "toddy", stock: 2 };
   assert.equal(purchaseFood(wallet, shop, true, 2, false), "purchased");
-  assert.equal(wallet.rupees, 3);
+  assert.equal(wallet.annas, 3);
   assert.equal(shop.stock, 1);
   finishFood(wallet, "toddy");
   assert.equal(wallet.toddiesDrunk, 1);
   assert.equal(wallet.snacksEaten, undefined);
   assert.equal(purchaseFood(wallet, shop, false, 2, false), "closed");
-  assert.equal(wallet.rupees, 3);
+  assert.equal(wallet.annas, 3);
 });
 test("toddy effects fade, freeze on pause and excess causes a bounded nausea episode", () => {
   const state = { level: 0, nausea: 0, episodes: 0 };

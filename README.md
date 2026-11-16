@@ -1,6 +1,6 @@
-# കളിയുഗം — Kaliyugham
+# കലിയുഗം
 
-Kaliyugham is a self-contained 3D open-world game inspired by Kerala in the early 1970s. Explore muddy lanes, coconut groves, mud-brick and thatch houses, paddy fields, and a village market. A wooden bridge on the field path joins the river's opposite banks. Canoe fishers cast nets while shore fishers use rods and hooks; swim in deep water or wade through shallows. Hens roam house yards, while cattle, deer, elephants, and other wildlife inhabit meadows and forest clearings. The landowner travels with attendants on foot or by horse cart. Their greetings portray a period custom, not an endorsement of feudal hierarchy. The world and characters are generated with Three.js; no external art assets are needed.
+കലിയുഗം is a self-contained 3D open-world game inspired by Kerala in the early 1970s. Explore muddy lanes, coconut groves, mud-brick and thatch houses, paddy fields, and a village market. A wooden bridge on the field path joins the river's opposite banks. Canoe fishers cast nets while shore fishers use rods and hooks; swim in deep water or wade through shallows. Hens roam house yards, while cattle, deer, elephants, and other wildlife inhabit meadows and forest clearings. The landowner travels with attendants on foot or by horse cart. Their greetings portray a period custom, not an endorsement of feudal hierarchy. The world and characters are generated with Three.js; no external art assets are needed.
 
 ## The living village
 
@@ -34,11 +34,11 @@ Kaliyugham is a self-contained 3D open-world game inspired by Kerala in the earl
 
 ## Buying food
 
-Start with ₹20. Walk up to the **banana stall** (₹1) or **coconut-water stall** (₹2) while its seller is present, then press **E** to buy and immediately eat or drink. The item appears in your hand, and the wallet and food HUD record the purchase and consumption. Repeated key presses cannot charge twice during consumption. Shops close at night, restock after sunrise, and require enough money. Gathering each starlight fragment earns ₹5. Dismount before shopping.
+Start with 12 annas (48 paise); the wallet displays the balance in paise. Collect eight old brass anna coins around the village; each is worth 4 annas (16 paise). Prices use the historical conversion of 16 annas to 1 rupee: a banana or tea costs 1 anna, coconut water, banana fritter, and toddy cost 2 annas, while kalari equipment costs 4–8 annas. Walk up to a staffed stall and press **E** to buy and immediately eat or drink. The item appears in your hand, and the wallet and food HUD record the purchase and consumption. Repeated key presses cannot charge twice during consumption. Shops close at night and restock after sunrise. Dismount before shopping. Anna is used here as a historical currency flavor; it had been replaced by decimal currency before the game's 1970s setting.
 
-- The old **ചായക്കട — Chaya Kada** near the market has a stove, kettle, benches, and a Malayalam sign. Press **E** near its counter, then choose **chaya (tea, ₹1)** or **pazham pori (banana fritter, ₹2)**. The shopkeeper commutes home at night; stock returns after dawn.
-- **കള്ളുഷാപ്പ് — Toddy shop** opens from 10:00 to 20:00, with adult patrons visiting in the afternoon. Press **E** at its counter and select toddy (₹2). Drinking causes temporary reduced walking speed and subtle camera sway; reduced-motion mode omits visual distortion. Repeated drinks can trigger a brief, non-graphic retching/rest episode. Effects fade with simulation time and freeze when paused. Horse riding is disabled while impaired. These are fictional game effects, not a recommendation to drink.
-- The **kalari equipment counter** sells a **bow (₹8)**, **sword (₹6)**, and **buckler (₹5)**. Press **E** nearby and choose an item. Each item is owned permanently for the current game session and cannot be charged twice.
+- The old **ചായക്കട — Chaya Kada** near the market has a stove, kettle, benches, and a Malayalam sign. Press **E** near its counter, then choose **chaya (tea, 1 anna)** or **pazham pori (banana fritter, 2 annas)**. The shopkeeper commutes home at night; stock returns after dawn.
+- **കള്ളുഷാപ്പ് — Toddy shop** opens from 10:00 to 20:00, with adult patrons visiting in the afternoon. Press **E** at its counter and select toddy (2 annas). Drinking causes temporary reduced walking speed and subtle camera sway; reduced-motion mode omits visual distortion. Repeated drinks can trigger a brief, non-graphic retching/rest episode. Effects fade with simulation time and freeze when paused. Horse riding is disabled while impaired. These are fictional game effects, not a recommendation to drink.
+- The **kalari equipment counter** sells a **bow (8 annas)**, **sword (6 annas)**, and **buckler (5 annas)**. Press **E** nearby and choose an item. Each item is owned permanently for the current game session and cannot be charged twice.
 - **F** cycles owned equipment and empty hands. **R** uses the selected item: a bow-practice arrow, sword-practice motion, or raised buckler. Animals in range and ahead respond by fleeing, with no wounds, damage, or killing. Three rabbits also roam the far-bank forest. Equipment use is disabled during meals, shopping, swimming, or riding; mouse dragging still controls the camera.
 
 ## Visual style
@@ -69,7 +69,7 @@ The `Deploy to GitHub Pages` workflow builds the site and publishes it whenever 
 - **L** — translate a nearby Malayalam board into English
 - **Space** — jump on land; rise while swimming
 - **Drag the scene** — rotate the camera
-- **E** — buy and consume food at a nearby staffed stall, gather starlight, or talk with a villager
+- **E** — buy and consume food at a nearby staffed stall, collect an old coin, or talk with a villager
 - **Escape** or the pause button — pause / resume
 
 The game is playable on desktop and mobile browsers. A WebGL-capable browser is required.

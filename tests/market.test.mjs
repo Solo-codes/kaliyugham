@@ -15,31 +15,31 @@ import {
 } from "../src/world/visuals.ts";
 
 test("E purchase deducts money and stock, and consumption is recorded on completion", () => {
-  const wallet = { rupees: 5, bananasEaten: 0, coconutsDrunk: 0 };
+  const wallet = { annas: 5, bananasEaten: 0, coconutsDrunk: 0 };
   const banana = { kind: "banana", stock: 2 };
   const coconut = { kind: "coconut-water", stock: 1 };
   assert.equal(purchaseFood(wallet, banana, true, 2, false), "purchased");
-  assert.equal(wallet.rupees, 4);
+  assert.equal(wallet.annas, 4);
   assert.equal(banana.stock, 1);
   assert.equal(wallet.bananasEaten, 0);
   finishFood(wallet, banana.kind);
   assert.equal(wallet.bananasEaten, 1);
   assert.equal(purchaseFood(wallet, coconut, true, 2, false), "purchased");
-  assert.equal(wallet.rupees, 2);
+  assert.equal(wallet.annas, 2);
   assert.equal(coconut.stock, 0);
   finishFood(wallet, coconut.kind);
   assert.equal(wallet.coconutsDrunk, 1);
   assert.ok(FOOD["coconut-water"].duration > 0);
 });
 test("closed, distant, busy, empty, and unaffordable purchases never alter inventory", () => {
-  const wallet = { rupees: 0, bananasEaten: 0, coconutsDrunk: 0 };
+  const wallet = { annas: 0, bananasEaten: 0, coconutsDrunk: 0 };
   const shop = { kind: "banana", stock: 1 };
   assert.equal(purchaseFood(wallet, shop, false, 1, false), "closed");
   assert.equal(purchaseFood(wallet, shop, true, 4, false), "closed");
   assert.equal(purchaseFood(wallet, shop, true, 1, true), "busy");
   assert.equal(purchaseFood(wallet, shop, true, 1, false), "no-money");
   assert.equal(shop.stock, 1);
-  assert.equal(wallet.rupees, 0);
+  assert.equal(wallet.annas, 0);
   assert.equal(
     purchaseFood(wallet, { kind: "banana", stock: 0 }, true, 1, false),
     "sold-out",
