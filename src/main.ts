@@ -116,6 +116,7 @@ import {
 import type { Solid, Body } from "./world/collision";
 import { makeFlowers, makeTemple, templePrayerHours } from "./world/temple";
 import {
+  addVegetationWind,
   makeDetailedTree,
   makeLeafAtlas,
   makeOutdoorEnvironment,
@@ -448,7 +449,7 @@ const villageTerrain = flattenTerrainArea(
   4.3,
   2,
 );
-const groundGrid = createTerrainGrid(190, 128, villageTerrain);
+const groundGrid = createTerrainGrid(190, 220, villageTerrain);
 const terrainHeight = groundGrid.heightAt;
 const roadSurfaceHeight = terrainHeight;
 const roadMeshHeight = createRoadSurfaceHeight(terrainHeight, distanceToRiver);
@@ -617,15 +618,19 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
+const oceanWaterMaterial = new THREE.MeshPhysicalMaterial({
+  color: "#668f8c",
+  transparent: true,
+  opacity: 0.72,
+  roughness: 0.34,
+  metalness: 0,
+  clearcoat: 0.3,
+  clearcoatRoughness: 0.2,
+  depthWrite: false,
+});
 const water = new THREE.Mesh(
-  new THREE.PlaneGeometry(220, 220),
-  new THREE.MeshStandardMaterial({
-    color: "#80b9b5",
-    transparent: true,
-    opacity: 0.64,
-    roughness: 0.28,
-    metalness: 0.04,
-  }),
+  new THREE.PlaneGeometry(220, 220, 1, 1),
+  oceanWaterMaterial,
 );
 water.rotation.x = -Math.PI / 2;
 water.position.y = -7.2;
@@ -1007,7 +1012,7 @@ const roadMaterial = new THREE.MeshStandardMaterial({
   side: THREE.DoubleSide,
 });
 const roadEdgeMaterial = new THREE.MeshStandardMaterial({
-  color: "#403326",
+  color: "#534333",
   roughness: 1,
   side: THREE.DoubleSide,
 });
@@ -1018,8 +1023,8 @@ roadCurves.forEach((curve, index) => {
   const rutOffset = isFootpath ? 0.3 : 0.66;
   makeRoadRibbon(curve, width, shoulderMaterial, 0.075);
   makeRoadRibbon(curve, trackWidth, roadMaterial, 0.105);
-  makeRoadRibbon(curve, 0.12, roadEdgeMaterial, 0.125, -rutOffset);
-  makeRoadRibbon(curve, 0.12, roadEdgeMaterial, 0.125, rutOffset);
+  makeRoadRibbon(curve, 0.075, roadEdgeMaterial, 0.125, -rutOffset);
+  makeRoadRibbon(curve, 0.075, roadEdgeMaterial, 0.125, rutOffset);
 });
 const sharedRoadPoints = new Map<
   string,
@@ -1057,10 +1062,12 @@ for (const junction of sharedRoadPoints.values()) {
   scene.add(pad);
 }
 
-const paddyWaterMaterial = new THREE.MeshStandardMaterial({
+const paddyWaterMaterial = new THREE.MeshPhysicalMaterial({
   color: "#78988a",
-  roughness: 0.28,
-  metalness: 0.04,
+  roughness: 0.34,
+  metalness: 0,
+  clearcoat: 0.24,
+  clearcoatRoughness: 0.24,
   transparent: true,
   opacity: 0.84,
   side: THREE.DoubleSide,
@@ -2120,7 +2127,7 @@ const villagerMaterials = [
     }),
 );
 const villagerSkinMaterial = new THREE.MeshStandardMaterial({
-  color: "#e5b991",
+  color: "#9b6c4e",
   roughness: 0.9,
 });
 const villagerDhotiMaterial = new THREE.MeshStandardMaterial({
@@ -2208,7 +2215,7 @@ for (let i = 0; i < villagerNames.length; i++) {
   const isWoman = [0, 1, 5, 7, 9, 11].includes(i) || (i >= 12 && i % 2 === 0);
   const clothing = villagerMaterials[i % villagerMaterials.length];
   const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.25, 0.53, 3, 7),
+    new THREE.CapsuleGeometry(0.235, 0.55, 5, 14),
     isWoman
       ? villagerSariMaterials[i % villagerSariMaterials.length]
       : clothing,
@@ -2227,8 +2234,17 @@ for (let i = 0; i < villagerNames.length; i++) {
   lowerWrap.castShadow = true;
   group.add(lowerWrap);
   if (isWoman) {
+    const palluGeometry = new THREE.PlaneGeometry(0.38, 1.08, 6, 14);
+    const palluPositions = palluGeometry.attributes.position;
+    for (let vertex = 0; vertex < palluPositions.count; vertex++) {
+      const x = palluPositions.getX(vertex),
+        y = palluPositions.getY(vertex),
+        drape = (0.5 + 0.5 * Math.sin((y + 0.54) * Math.PI * 2.4)) * 0.025;
+      palluPositions.setZ(vertex, drape + Math.sin(x * 34 + y * 3) * 0.008);
+    }
+    palluGeometry.computeVertexNormals();
     const pallu = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 1.05, 0.1),
+      palluGeometry,
       villagerSariMaterials[i % villagerSariMaterials.length],
     );
     pallu.position.set(-0.2, 1.02, 0.17);
@@ -2242,7 +2258,7 @@ for (let i = 0; i < villagerNames.length; i++) {
     group.add(hairBun);
   }
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.21, 10, 8),
+    new THREE.SphereGeometry(0.205, 20, 16),
     villagerSkinMaterial,
   );
   head.position.y = 1.19;
@@ -3888,10 +3904,12 @@ const riverBankMaterial = new THREE.MeshStandardMaterial({
   roughness: 1,
   side: THREE.DoubleSide,
 });
-const riverWaterMaterial = new THREE.MeshStandardMaterial({
-  color: "#588b83",
-  roughness: 0.2,
-  metalness: 0.08,
+const riverWaterMaterial = new THREE.MeshPhysicalMaterial({
+  color: "#527a76",
+  roughness: 0.24,
+  metalness: 0,
+  clearcoat: 0.42,
+  clearcoatRoughness: 0.18,
   transparent: true,
   opacity: 0.78,
   depthWrite: false,
@@ -5127,7 +5145,7 @@ for (let blade = 0; blade < 5; blade++) {
   const baseZ = directionZ * 0.018;
   const tipX = directionX * (0.055 + (blade % 2) * 0.018);
   const tipZ = directionZ * (0.055 + (blade % 2) * 0.018);
-  const height = 0.28 + (blade % 3) * 0.035;
+  const height = 0.24 + (blade % 3) * 0.045;
   grassVertices.push(
     baseX - sideX,
     0,
@@ -5155,6 +5173,7 @@ const grassMaterials = ["#718d4b", "#86984e", "#9c9b57"].map(
       side: THREE.DoubleSide,
     }),
 );
+grassMaterials.forEach((material) => addVegetationWind(material, 0.14));
 for (const [siteIndex, [siteX, siteZ]] of animalSites.entries()) {
   if (siteIndex >= 7 && siteIndex !== 9) continue;
   for (let colorIndex = 0; colorIndex < grassMaterials.length; colorIndex++) {
@@ -5185,11 +5204,11 @@ for (const [siteIndex, [siteX, siteZ]] of animalSites.entries()) {
 }
 
 const meadowMeshes = grassMaterials.map(
-  (material) => new THREE.InstancedMesh(grassBladeGeometry, material, 6000),
+  (material) => new THREE.InstancedMesh(grassBladeGeometry, material, 11000),
 );
 const meadowTransform = new THREE.Object3D();
 let meadowBladeCount = 0;
-for (let attempt = 0; attempt < 56000 && meadowBladeCount < 18000; attempt++) {
+for (let attempt = 0; attempt < 102000 && meadowBladeCount < 32000; attempt++) {
   const x = (random() - 0.5) * 178;
   const z = (random() - 0.5) * 178;
   if (
@@ -5261,42 +5280,57 @@ const hairMaterial = new THREE.MeshStandardMaterial({
   roughness: 1,
 });
 const body = new THREE.Mesh(
-  new THREE.CapsuleGeometry(0.34, 0.68, 4, 8),
+  new THREE.CapsuleGeometry(0.28, 0.7, 5, 16),
   outfitMaterial,
 );
 body.position.y = 0.89;
 body.castShadow = true;
 player.add(body);
 const head = new THREE.Mesh(
-  new THREE.SphereGeometry(0.27, 12, 10),
+  new THREE.SphereGeometry(0.22, 24, 18),
   skinMaterial,
 );
 head.position.y = 1.57;
 head.castShadow = true;
 player.add(head);
 const hair = new THREE.Mesh(
-  new THREE.SphereGeometry(0.275, 10, 7, 0, Math.PI * 2, 0, Math.PI * 0.48),
+  new THREE.SphereGeometry(0.225, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.48),
   hairMaterial,
 );
 hair.position.set(0, 1.69, 0.015);
 player.add(hair);
-for (const eyeX of [-0.105, 0.105]) {
+const neck = new THREE.Mesh(
+  new THREE.CylinderGeometry(0.075, 0.095, 0.18, 14),
+  skinMaterial,
+);
+neck.position.y = 1.39;
+player.add(neck);
+for (const side of [-1, 1]) {
+  const ear = new THREE.Mesh(
+    new THREE.SphereGeometry(0.045, 12, 8),
+    skinMaterial,
+  );
+  ear.position.set(side * 0.21, 1.56, 0.005);
+  ear.scale.set(0.72, 1, 0.72);
+  player.add(ear);
+}
+for (const eyeX of [-0.082, 0.082]) {
   const eye = new THREE.Mesh(
-    new THREE.SphereGeometry(0.035, 7, 5),
+    new THREE.SphereGeometry(0.022, 10, 8),
     eyeMaterial,
   );
-  eye.position.set(eyeX, 1.6, -0.247);
+  eye.position.set(eyeX, 1.59, -0.201);
   player.add(eye);
 }
 const nose = new THREE.Mesh(
-  new THREE.SphereGeometry(0.045, 7, 5),
+  new THREE.SphereGeometry(0.034, 12, 8),
   skinMaterial,
 );
-nose.scale.set(0.72, 0.78, 0.65);
-nose.position.set(0, 1.52, -0.278);
+nose.scale.set(0.72, 0.9, 0.72);
+nose.position.set(0, 1.51, -0.224);
 player.add(nose);
 const scarf = new THREE.Mesh(
-  new THREE.BoxGeometry(0.54, 0.15, 0.32),
+  new THREE.BoxGeometry(0.46, 0.11, 0.28),
   bodyMaterial,
 );
 scarf.position.set(0, 1.28, 0.02);
@@ -5310,12 +5344,19 @@ playerMundu.position.y = 0.49;
 playerMundu.castShadow = true;
 player.add(playerMundu);
 const backpack = new THREE.Mesh(
-  new THREE.BoxGeometry(0.4, 0.5, 0.22),
-  new THREE.MeshStandardMaterial({ color: "#9e8058", roughness: 1 }),
+  new THREE.CylinderGeometry(0.15, 0.22, 0.43, 16, 4),
+  farmerBasketMaterial,
 );
-backpack.position.set(0, 0.99, 0.31);
+backpack.position.set(0, 1.0, 0.31);
 backpack.castShadow = true;
 player.add(backpack);
+const backpackRim = new THREE.Mesh(
+  new THREE.TorusGeometry(0.16, 0.018, 6, 18),
+  cartTrim,
+);
+backpackRim.rotation.x = Math.PI / 2;
+backpackRim.position.set(0, 1.22, 0.31);
+player.add(backpackRim);
 const playerLegs: THREE.Group[] = [];
 for (const side of [-1, 1]) {
   const leg = new THREE.Group();
@@ -6666,6 +6707,7 @@ const woodDetail = detailTexture("wood", 3);
 const thatchDetail = detailTexture("thatch", 7);
 const clothDetail = detailTexture("cloth", 5);
 const waterDetail = detailTexture("water");
+const waterSurfaceMaps = makeSurfaceMaps("soil", 12);
 const textureMaterials = (
   materials: THREE.Material[],
   texture: THREE.Texture,
@@ -6731,9 +6773,22 @@ textureMaterials(
   0.008,
 );
 riverWaterMaterial.bumpMap = waterDetail;
-riverWaterMaterial.bumpScale = 0.035;
+riverWaterMaterial.bumpScale = 0.018;
 paddyWaterMaterial.bumpMap = waterDetail;
-paddyWaterMaterial.bumpScale = 0.02;
+paddyWaterMaterial.bumpScale = 0.01;
+for (const material of [
+  riverWaterMaterial,
+  paddyWaterMaterial,
+  oceanWaterMaterial,
+]) {
+  material.map = waterSurfaceMaps.map;
+  material.roughnessMap = waterSurfaceMaps.roughnessMap;
+  material.normalMap = waterSurfaceMaps.normalMap;
+  material.normalScale.set(
+    material === riverWaterMaterial ? 0.24 : 0.14,
+    material === riverWaterMaterial ? 0.24 : 0.14,
+  );
+}
 const smoothGeometry = new Map<THREE.BufferGeometry, THREE.BufferGeometry>();
 scene.traverse((object) => {
   if (!(object instanceof THREE.Mesh)) return;
@@ -6952,6 +7007,20 @@ scene.children.forEach((object, index) => {
       trunkMaterial,
     ),
   );
+});
+const vegetationWindUniforms: THREE.IUniform<number>[] = [];
+scene.traverse((object) => {
+  if (!(object instanceof THREE.Mesh)) return;
+  const materials = Array.isArray(object.material)
+    ? object.material
+    : [object.material];
+  for (const material of materials) {
+    const uniform = material.userData.windTime as
+      | THREE.IUniform<number>
+      | undefined;
+    if (uniform && !vegetationWindUniforms.includes(uniform))
+      vegetationWindUniforms.push(uniform);
+  }
 });
 const wrapMaterials = new Set<THREE.Material>([
   villagerDhotiMaterial,
@@ -7421,6 +7490,15 @@ const animate = () => {
   const delta = paused ? 0 : Math.min(clock.getDelta(), 0.04);
   if (gameStarted) simulationTime += delta;
   const elapsed = simulationTime;
+  for (const uniform of vegetationWindUniforms) uniform.value = elapsed;
+  const rippleX = (elapsed * 0.004) % 1;
+  const rippleY = (elapsed * -0.0025) % 1;
+  for (const map of [
+    waterSurfaceMaps.map,
+    waterSurfaceMaps.roughnessMap,
+    waterSurfaceMaps.normalMap,
+  ])
+    map.offset.set(rippleX, rippleY);
   const dayState = updateEnvironment(elapsed, delta);
   const festival = sampleFestival(simulationDay(elapsed), dayState.hour);
   if (gameStarted && delta > 0 && festival.active !== lastFestivalActive) {

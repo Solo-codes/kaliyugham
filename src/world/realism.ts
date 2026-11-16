@@ -7,48 +7,125 @@ const hash = (x: number, y: number) => {
   h = Math.imul(h ^ (h >>> 13), 1274126177);
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 };
-/** Continuous periodic multi-scale detail rather than flat colour and repeating stripes. */
+
+/** Gentle, shared-time wind for instanced leaves and grass blades. */
+export function addVegetationWind(
+  material: THREE.MeshStandardMaterial,
+  strength: number,
+  canopy = false,
+) {
+  const time: THREE.IUniform<number> = { value: 0 };
+  material.userData.windTime = time;
+  material.onBeforeCompile = (shader) => {
+    shader.uniforms.uWindTime = time;
+    shader.vertexShader = shader.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uWindTime;",
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+#ifdef USE_INSTANCING
+float windPhase = uWindTime * 0.7 + instanceMatrix[3].x * 0.21 + instanceMatrix[3].z * 0.17;
+float windWeight = ${canopy ? "smoothstep(0.5, 4.0, instanceMatrix[3].y + position.y) * (position.y + 0.36)" : "max(position.y, 0.0)"};
+transformed.x += sin(windPhase) * windWeight * ${strength.toFixed(3)};
+transformed.z += cos(windPhase * 0.83) * windWeight * ${strength.toFixed(3)} * 0.55;
+#endif`,
+      );
+  };
+  material.customProgramCacheKey = () =>
+    `vegetation-wind-${strength.toFixed(3)}-${canopy ? "canopy" : "grass"}`;
+  material.needsUpdate = true;
+  return time;
+}
+/** Tileable multi-scale material detail with colour, height, roughness and normals. */
 export function makeSurfaceMaps(kind: SurfaceKind, repeat = 1) {
   const size = 256,
     colour = new Uint8Array(size * size * 4),
     height = new Uint8Array(size * size * 4),
-    roughness = new Uint8Array(size * size * 4);
+    roughness = new Uint8Array(size * size * 4),
+    normal = new Uint8Array(size * size * 4);
+  const smooth = (value: number) => value * value * (3 - 2 * value);
+  const lerp = (a: number, b: number, amount: number) => a + (b - a) * amount;
+  const periodicNoise = (u: number, v: number, cells: number) => {
+    const x = u * cells,
+      y = v * cells,
+      x0 = Math.floor(x),
+      y0 = Math.floor(y),
+      fx = smooth(x - x0),
+      fy = smooth(y - y0),
+      wrapX = (value: number) => (value + cells) % cells,
+      wrapY = (value: number) => (value + cells) % cells;
+    const a = lerp(
+      hash(wrapX(x0), wrapY(y0)),
+      hash(wrapX(x0 + 1), wrapY(y0)),
+      fx,
+    );
+    const b = lerp(
+      hash(wrapX(x0), wrapY(y0 + 1)),
+      hash(wrapX(x0 + 1), wrapY(y0 + 1)),
+      fx,
+    );
+    return (lerp(a, b, fy) - 0.5) * 2;
+  };
+  const sampleHeight = (u: number, v: number) => {
+    const broad = periodicNoise(u, v, 4),
+      middle = periodicNoise(u, v, 16),
+      fine = periodicNoise(u, v, 64);
+    const fiber =
+      kind === "bark"
+        ? Math.sin((u * 18 + broad * 0.7) * Math.PI * 2) * 0.38 +
+          Math.sin((u * 43 + middle * 0.35) * Math.PI * 2) * 0.16
+        : kind === "thatch"
+          ? Math.sin((u * 30 + Math.sin(v * 12) * 0.07) * Math.PI * 2) * 0.42
+          : kind === "cloth"
+            ? Math.sin(u * Math.PI * 2 * 96) * 0.12 +
+              Math.sin(v * Math.PI * 2 * 96) * 0.12
+            : kind === "plaster"
+              ? periodicNoise(u, v, 32) * 0.18
+              : periodicNoise(u, v, 32) * 0.12;
+    return broad * 0.48 + middle * 0.27 + fine * 0.12 + fiber * 0.13;
+  };
   for (let y = 0; y < size; y++)
     for (let x = 0; x < size; x++) {
-      const u = (x / size) * Math.PI * 2,
-        v = (y / size) * Math.PI * 2;
-      const coarse =
-        Math.sin(u * 3 + Math.sin(v * 2)) * 0.35 +
-        Math.cos(v * 5 - u * 2) * 0.2 +
-        Math.sin(u * 11 + v * 7) * 0.1;
-      const grain =
-        kind === "thatch"
-          ? Math.sin(u * 58 + Math.sin(v * 8) * 0.3) * 0.42 +
-            Math.cos(v * 7) * 0.1
-          : kind === "bark"
-            ? Math.sin(u * 26 + Math.sin(v * 3) * 1.7) * 0.25
-            : kind === "cloth"
-              ? ((x % 4 < 2 ? 1 : -1) + (y % 4 < 2 ? 1 : -1)) * 0.08
-              : coarse;
-      const noise = hash(x, y) - 0.5;
-      const value = THREE.MathUtils.clamp(
-        0.68 + grain * 0.22 + noise * 0.18,
-        0,
-        1,
-      );
-      const offset = (y * size + x) * 4;
+      const u = x / size,
+        v = y / size,
+        detail = sampleHeight(u, v),
+        value = THREE.MathUtils.clamp(0.72 + detail * 0.27, 0, 1),
+        offset = (y * size + x) * 4;
       for (let channel = 0; channel < 3; channel++) {
-        colour[offset + channel] = Math.round((0.77 + value * 0.22) * 255);
+        colour[offset + channel] = Math.round((0.7 + value * 0.3) * 255);
         height[offset + channel] = Math.round(value * 255);
         roughness[offset + channel] = Math.round(
-          THREE.MathUtils.clamp(0.68 + noise * 0.18 + coarse * 0.15, 0, 1) *
-            255,
+          THREE.MathUtils.clamp(
+            (kind === "cloth" ? 0.76 : 0.86) + detail * 0.12,
+            0,
+            1,
+          ) * 255,
         );
       }
       colour[offset + 3] = height[offset + 3] = roughness[offset + 3] = 255;
     }
-  const texture = (data: Uint8Array) => {
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const left = height[(y * size + ((x + size - 1) % size)) * 4] / 255,
+        right = height[(y * size + ((x + 1) % size)) * 4] / 255,
+        down = height[(((y + size - 1) % size) * size + x) * 4] / 255,
+        up = height[(((y + 1) % size) * size + x) * 4] / 255;
+      const nx = (left - right) * 5,
+        ny = (down - up) * 5,
+        nz = 1,
+        length = Math.hypot(nx, ny, nz),
+        offset = (y * size + x) * 4;
+      normal[offset] = Math.round(((nx / length) * 0.5 + 0.5) * 255);
+      normal[offset + 1] = Math.round(((ny / length) * 0.5 + 0.5) * 255);
+      normal[offset + 2] = Math.round(((nz / length) * 0.5 + 0.5) * 255);
+      normal[offset + 3] = 255;
+    }
+  const texture = (data: Uint8Array, isColor = false) => {
     const map = new THREE.DataTexture(data, size, size);
+    if (isColor) map.colorSpace = THREE.SRGBColorSpace;
     map.wrapS = map.wrapT = THREE.RepeatWrapping;
     map.repeat.set(repeat, repeat);
     map.generateMipmaps = true;
@@ -58,9 +135,10 @@ export function makeSurfaceMaps(kind: SurfaceKind, repeat = 1) {
     return map;
   };
   return {
-    map: texture(colour),
+    map: texture(colour, true),
     bumpMap: texture(height),
     roughnessMap: texture(roughness),
+    normalMap: texture(normal),
   };
 }
 
@@ -105,15 +183,28 @@ export function makeDetailedTree(
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     return seed / 4294967296;
   };
-  const leafGeometry = new THREE.PlaneGeometry(0.42, 0.65, 1, 2);
+  const leafGeometry = new THREE.PlaneGeometry(0.46, 0.72, 3, 5);
+  const leafPositions = leafGeometry.attributes.position;
+  for (let vertex = 0; vertex < leafPositions.count; vertex++) {
+    const x = leafPositions.getX(vertex),
+      y = leafPositions.getY(vertex),
+      across = x / 0.23,
+      along = (y + 0.36) / 0.72;
+    leafPositions.setZ(
+      vertex,
+      (1 - across * across) * Math.sin(along * Math.PI) * 0.055,
+    );
+  }
+  leafGeometry.computeVertexNormals();
   const leafMaterial = new THREE.MeshStandardMaterial({
     map: leafMap,
     alphaTest: 0.45,
     side: THREE.DoubleSide,
-    roughness: 0.95,
+    roughness: 0.98,
     emissive: "#19220b",
     emissiveIntensity: 0.08,
   });
+  addVegetationWind(leafMaterial, 0.11, true);
   const leaves = new THREE.InstancedMesh(leafGeometry, leafMaterial, 240);
   const dummy = new THREE.Object3D();
   let index = 0;
@@ -161,9 +252,9 @@ export function makeDetailedTree(
       leaves.setColorAt(
         index - 1,
         new THREE.Color().setHSL(
-          0.24 + random() * 0.035,
-          0.35,
-          0.58 + random() * 0.2,
+          0.275 + random() * 0.045,
+          0.42,
+          0.46 + random() * 0.2,
         ),
       );
     }
