@@ -55,6 +55,10 @@ The graphics selector switches between **Realistic** (screen-space contact shado
 - Create a production build with `npm run build`.
 - Run world, movement, weather, and water regression tests with `npm test`.
 
+## Deploy with GitHub Pages
+
+The `Deploy to GitHub Pages` workflow builds the site and publishes it whenever changes are pushed to `main`. To enable it, open the repository's **Settings → Pages** and set **Build and deployment → Source** to **GitHub Actions**. The site will be available at `https://solo-codes.github.io/kaliyugham/` after the first successful deployment. You can also start a deployment manually from the repository's **Actions** tab.
+
 ## Controls
 
 - **WASD** or **arrow keys** — walk / swim
