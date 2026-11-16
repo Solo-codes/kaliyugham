@@ -205,12 +205,13 @@ document.querySelector<HTMLDivElement>("#app")!.innerHTML = `
         <div class="joystick-ring"><div class="joystick-knob"></div></div>
       </div>
       <div class="mobile-action-pad" aria-label="Actions">
-        <button type="button" data-tap-key="space" aria-label="Jump">Jump</button>
-        <button type="button" data-tap-key="e" aria-label="Interact">Act</button>
-        <button type="button" data-tap-key="q" aria-label="Call or mount horse">Horse</button>
-        <button type="button" data-hold-key="shift" aria-label="Jog or gallop">Run</button>
-        <button type="button" data-tap-key="f" aria-label="Cycle equipment">Gear</button>
-        <button type="button" data-tap-key="r" aria-label="Use equipment">Use</button>
+        <button type="button" data-tap-key="space" data-mobile-action="space" aria-label="Space to jump"><kbd>SPACE</kbd><span>JUMP</span></button>
+        <button type="button" data-tap-key="e" data-mobile-action="e" aria-label="E to act" hidden><kbd>E</kbd><span>ACT</span></button>
+        <button type="button" data-tap-key="q" data-mobile-action="q" aria-label="Q for horse"><kbd>Q</kbd><span>CALL</span></button>
+        <button type="button" data-hold-key="shift" data-mobile-action="shift" aria-label="Shift to run"><kbd>SHIFT</kbd><span>RUN</span></button>
+        <button type="button" data-tap-key="f" data-mobile-action="f" aria-label="F to cycle gear" hidden><kbd>F</kbd><span>GEAR</span></button>
+        <button type="button" data-tap-key="r" data-mobile-action="r" aria-label="R to use equipment" hidden><kbd>R</kbd><span>USE</span></button>
+        <button type="button" data-tap-key="l" data-mobile-action="l" aria-label="L to translate a sign" hidden><kbd>L</kbd><span>SIGN</span></button>
       </div>
     </div>
 
@@ -5592,6 +5593,23 @@ const portableLightPool = Array.from({ length: 4 }, () => {
 const keys = new Set<string>();
 let handleKeyDown: (event: KeyboardEvent) => void = () => {};
 const mobileControls = document.querySelector<HTMLDivElement>("#mobile-controls")!;
+const updateMobileAction = (
+  key: string,
+  available: boolean,
+  caption: string,
+  label: string,
+) => {
+  const button = mobileControls.querySelector<HTMLButtonElement>(
+    `[data-mobile-action="${key}"]`,
+  );
+  if (!button) return;
+  button.hidden = !available;
+  if (button.dataset.caption !== caption) {
+    button.querySelector("span")!.textContent = caption;
+    button.setAttribute("aria-label", label);
+    button.dataset.caption = caption;
+  }
+};
 mobileControls
   .querySelectorAll<HTMLButtonElement>("[data-hold-key]")
   .forEach((button) => {
@@ -7850,6 +7868,72 @@ const animate = () => {
       8;
     const nearHeritage = heritageActivities.some(
       ([x, z]) => Math.hypot(playerState.x - x, playerState.z - z) < 3,
+    );
+    const nearbySign = nearestBoard();
+    const marketOpen = Boolean(
+      shopNearby &&
+        marketSellers[shopNearby.index].working &&
+        isWorkday(dayState.hour),
+    );
+    const nearbyAction =
+      !consuming &&
+      (Boolean(specialShop) ||
+        marketOpen ||
+        nearestRelic ||
+        Boolean(nearbyVillager) ||
+        nearHeritage);
+    const nearbyActionLabel = specialShop
+      ? "SHOP"
+      : marketOpen
+        ? "BUY"
+        : nearestRelic
+          ? "COIN"
+          : nearbyVillager || nearHeritage
+            ? "TALK"
+            : "ACT";
+    updateMobileAction("e", nearbyAction, nearbyActionLabel, `E · ${nearbyActionLabel}`);
+    updateMobileAction(
+      "l",
+      Boolean(nearbySign) && !paused && !openShop,
+      "SIGN",
+      "L · Translate nearby Malayalam sign",
+    );
+    const horseActionCaption =
+      horseMode === "ridden" ? "DISMOUNT" : nearHorse ? "MOUNT" : "CALL";
+    updateMobileAction(
+      "q",
+      horseMode !== "coming" && toddyState.level < 0.3,
+      horseActionCaption,
+      `Q · ${horseActionCaption.toLowerCase()} horse`,
+    );
+    updateMobileAction(
+      "space",
+      horseMode !== "ridden" && (playerState.grounded || playerState.swimming),
+      playerState.swimming ? "RISE" : "JUMP",
+      `Space · ${playerState.swimming ? "Rise while swimming" : "Jump"}`,
+    );
+    updateMobileAction(
+      "shift",
+      !consuming && !openShop && toddyState.nausea === 0,
+      horseMode === "ridden" ? "GALLOP" : "RUN",
+      `Shift · ${horseMode === "ridden" ? "Gallop" : "Run"}`,
+    );
+    updateMobileAction(
+      "f",
+      equipment.owned.length > 0 && !consuming && !openShop,
+      "GEAR",
+      "F · Cycle owned equipment",
+    );
+    updateMobileAction(
+      "r",
+      equipment.selected !== "none" &&
+        equipment.cooldown <= 0 &&
+        !playerState.swimming &&
+        horseMode !== "ridden" &&
+        !consuming &&
+        !openShop,
+      "USE",
+      `R · Use ${equipment.selected === "none" ? "equipment" : KALARI_GOODS[equipment.selected].label}`,
     );
     const prompt = consuming
       ? `Enjoying ${FOOD[consuming.kind].label}…`
