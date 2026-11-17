@@ -1,5 +1,7 @@
 import "./style.css";
 import * as THREE from "three";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
 import {
   bridgeHeightAt,
   createBridgeSpan,
@@ -651,6 +653,13 @@ const leafMaterials = ["#506c50", "#688263", "#80906a", "#62785b"].map(
 const trunkGeometry = new THREE.CylinderGeometry(0.13, 0.23, 2.25, 6);
 const canopyGeometry = new THREE.IcosahedronGeometry(1, 2);
 const trees: THREE.Group[] = [];
+const vegetationWindSways: {
+  group: THREE.Group;
+  phase: number;
+  amplitude: number;
+  baseX: number;
+  baseZ: number;
+}[] = [];
 for (let i = 0; i < 154; i++) {
   const x = (random() - 0.5) * 164;
   const z = (random() - 0.5) * 164;
@@ -1365,6 +1374,7 @@ const rockMaterial = new THREE.MeshStandardMaterial({
   flatShading: true,
 });
 const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
+const scatteredRocks: THREE.Mesh[] = [];
 for (let i = 0; i < 52; i++) {
   const x = (random() - 0.5) * 166;
   const z = (random() - 0.5) * 166;
@@ -1395,6 +1405,7 @@ for (let i = 0; i < 52; i++) {
   rock.castShadow = true;
   rock.receiveShadow = true;
   scene.add(rock);
+  scatteredRocks.push(rock);
 }
 
 const wallMaterials = ["#806044", "#73543d", "#8c6a49", "#694d39"].map(
@@ -2567,9 +2578,18 @@ const periodEyeMaterial = new THREE.MeshStandardMaterial({
   color: "#302820",
   roughness: 0.75,
 });
+const referenceHairMaterial = new THREE.MeshStandardMaterial({
+  color: "#241d1b",
+  roughness: 0.98,
+});
+const referenceBeardMaterial = new THREE.MeshStandardMaterial({
+  color: "#302522",
+  roughness: 0.98,
+});
 const createPeriodFigure = (
   coatMaterial: THREE.Material,
   wearsDrape = false,
+  referenceFaceStyle?: number,
 ) => {
   const figure = new THREE.Group();
   const torso = new THREE.Mesh(
@@ -2587,9 +2607,14 @@ const createPeriodFigure = (
   mundu.castShadow = true;
   figure.add(mundu);
   const face = new THREE.Mesh(
-    new THREE.SphereGeometry(0.23, 9, 7),
+    new THREE.SphereGeometry(
+      referenceFaceStyle === undefined ? 0.23 : 0.235,
+      referenceFaceStyle === undefined ? 9 : 20,
+      referenceFaceStyle === undefined ? 7 : 16,
+    ),
     farmerSkinMaterial,
   );
+  if (referenceFaceStyle !== undefined) face.scale.set(1.08, 1, 0.96);
   face.position.y = 1.57;
   face.castShadow = true;
   figure.add(face);
@@ -2601,23 +2626,99 @@ const createPeriodFigure = (
     eye.position.set(eyeX, 1.61, -0.205);
     figure.add(eye);
   }
-  for (const side of [-1, 1]) {
-    const moustache = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 7, 5),
-      periodHairMaterial,
+  if (referenceFaceStyle !== undefined) {
+    // Shared face cues drawn from the supplied portrait: broad cheeks, dense
+    // curls, heavy brows, and a full beard. Instancing keeps the three figures light.
+    const curlGeometry = new THREE.SphereGeometry(0.074, 8, 6);
+    const curls = new THREE.InstancedMesh(curlGeometry, referenceHairMaterial, 38);
+    const curl = new THREE.Object3D();
+    let curlIndex = 0;
+    for (let ring = 0; ring < 4; ring++) {
+      const count = [9, 11, 10, 8][ring];
+      const ringRadius = [0.12, 0.19, 0.22, 0.14][ring];
+      const y = [1.78, 1.75, 1.66, 1.86][ring];
+      for (let item = 0; item < count; item++) {
+        const angle = (item / count) * Math.PI * 2 + ring * 0.31 + referenceFaceStyle * 0.16;
+        curl.position.set(Math.cos(angle) * ringRadius, y, Math.sin(angle) * ringRadius * 0.82);
+        const size = 0.8 + ((item * 7 + ring * 3 + referenceFaceStyle) % 5) * 0.09;
+        curl.scale.set(size, size * 0.9, size);
+        curl.updateMatrix();
+        curls.setMatrixAt(curlIndex++, curl.matrix);
+      }
+    }
+    curls.count = curlIndex;
+    curls.castShadow = true;
+    figure.add(curls);
+
+    const beard = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18, 14, 10),
+      referenceBeardMaterial,
     );
-    moustache.scale.set(1.15, 0.42, 0.55);
-    moustache.position.set(side * 0.07, 1.49, -0.214);
-    moustache.rotation.z = side * -0.12;
-    figure.add(moustache);
+    beard.scale.set(1.08, 0.95, 0.68);
+    beard.position.set(0, 1.445, -0.125);
+    beard.castShadow = true;
+    figure.add(beard);
+    for (const side of [-1, 1]) {
+      const brow = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.023, 0.08, 3, 6),
+        referenceHairMaterial,
+      );
+      brow.position.set(side * 0.082, 1.66, -0.194);
+      brow.rotation.z = side * -0.12;
+      figure.add(brow);
+      const moustache = new THREE.Mesh(
+        new THREE.SphereGeometry(0.075, 10, 7),
+        referenceBeardMaterial,
+      );
+      moustache.scale.set(1, 0.42, 0.55);
+      moustache.position.set(side * 0.06, 1.5, -0.212);
+      figure.add(moustache);
+    }
   }
-  const turban = new THREE.Mesh(
-    new THREE.SphereGeometry(0.27, 8, 6),
-    wearsDrape ? guardCloth : nobleCloth,
-  );
-  turban.scale.set(1, 0.52, 1);
-  turban.position.y = 1.77;
-  figure.add(turban);
+  if (referenceFaceStyle === undefined) {
+    for (const side of [-1, 1]) {
+      const moustache = new THREE.Mesh(
+        new THREE.SphereGeometry(0.075, 7, 5),
+        periodHairMaterial,
+      );
+      moustache.scale.set(1.15, 0.42, 0.55);
+      moustache.position.set(side * 0.07, 1.49, -0.214);
+      moustache.rotation.z = side * -0.12;
+      figure.add(moustache);
+    }
+  }
+  if (referenceFaceStyle === undefined) {
+    const turban = new THREE.Mesh(
+      new THREE.SphereGeometry(0.27, 8, 6),
+      wearsDrape ? guardCloth : nobleCloth,
+    );
+    turban.scale.set(1, 0.52, 1);
+    turban.position.y = 1.77;
+    figure.add(turban);
+  } else {
+    // A light shoulder cloth over a mundu gives the training figures a Kerala
+    // period silhouette without modern shirts, shoes, or headwear.
+    const drapeColors = ["#d8c9a5", "#b7a37d", "#d4c39b"];
+    const shoulderCloth = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.29, 0.98, 5, 12),
+      new THREE.MeshStandardMaterial({
+        color: drapeColors[referenceFaceStyle % drapeColors.length],
+        roughness: 1,
+        side: THREE.DoubleSide,
+      }),
+    );
+    const clothPositions = shoulderCloth.geometry.attributes.position;
+    for (let vertex = 0; vertex < clothPositions.count; vertex++) {
+      const x = clothPositions.getX(vertex);
+      const y = clothPositions.getY(vertex);
+      clothPositions.setZ(vertex, 0.045 * Math.sin((y + 0.5) * Math.PI * 2) + 0.018 * x * x);
+    }
+    shoulderCloth.geometry.computeVertexNormals();
+    shoulderCloth.position.set(-0.19, 1.02, -0.235);
+    shoulderCloth.rotation.z = 0.3 + referenceFaceStyle * 0.08;
+    shoulderCloth.castShadow = true;
+    figure.add(shoulderCloth);
+  }
   if (wearsDrape) {
     const sash = new THREE.Mesh(
       new THREE.BoxGeometry(0.17, 0.92, 0.52),
@@ -2669,7 +2770,7 @@ const createPeriodFigure = (
   return { figure, arms, legs };
 };
 const kalariFigures = [-2.4, 0, 2.4].map((x, index) => {
-  const practitioner = createPeriodFigure(farmerSkinMaterial, false);
+  const practitioner = createPeriodFigure(farmerSkinMaterial, false, index);
   practitioner.figure.position.set(x, 0.1, index === 1 ? -0.5 : 0.35);
   practitioner.figure.rotation.y = index === 2 ? -0.25 : 0.25;
   practitioner.figure.scale.setScalar(index === 1 ? 0.95 : 0.9);
@@ -5398,6 +5499,164 @@ for (const side of [-1, 1]) {
 const playerVisual = new THREE.Group();
 while (player.children.length > 0) playerVisual.add(player.children[0]);
 player.add(playerVisual);
+const playerPose = new THREE.Group();
+playerVisual.add(playerPose);
+const playerPoseModels: { base?: THREE.Group } = {};
+const playerLimbAnchors = new Set<THREE.Group>([...playerArms, ...playerLegs]);
+for (const child of playerVisual.children) {
+  if (child === playerPose) continue;
+  if (child instanceof THREE.Group && playerLimbAnchors.has(child)) {
+    child.traverse((part) => {
+      if (part instanceof THREE.Mesh) part.visible = false;
+    });
+  } else {
+    child.visible = false;
+  }
+}
+const assetLoader = new GLTFLoader();
+const assetTemplatePromises = new Map<string, Promise<THREE.Group>>();
+const loadAssetTemplate = (filename: string) => {
+  let template = assetTemplatePromises.get(filename);
+  if (!template) {
+    template = new Promise<THREE.Group>((resolve, reject) => {
+      assetLoader.load(
+        `${import.meta.env.BASE_URL}models/${filename}`,
+        (gltf) => resolve(gltf.scene),
+        undefined,
+        reject,
+      );
+    });
+    assetTemplatePromises.set(filename, template);
+  }
+  return template.then((scene) => scene.clone(true));
+};
+const fitImportedModel = (
+  model: THREE.Group,
+  targetHeight: number,
+  faceRotation = 0,
+) => {
+  model.updateMatrixWorld(true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const scale = targetHeight / Math.max(size.y, 0.001);
+  model.scale.setScalar(scale);
+  model.position.set(
+    -((bounds.min.x + bounds.max.x) * 0.5) * scale,
+    -bounds.min.y * scale,
+    -((bounds.min.z + bounds.max.z) * 0.5) * scale,
+  );
+  model.rotation.y = faceRotation;
+  model.traverse((part) => {
+    if (part instanceof THREE.Mesh) {
+      if (!part.geometry.attributes.normal)
+        part.geometry.computeVertexNormals();
+      part.castShadow = true;
+      part.receiveShadow = true;
+      const materials = Array.isArray(part.material)
+        ? part.material
+        : [part.material];
+      for (const material of materials) {
+        if (material instanceof THREE.MeshStandardMaterial) {
+          material.roughness = Math.max(material.roughness, 0.72);
+          material.envMapIntensity = 0.8;
+        }
+      }
+    }
+  });
+  return model;
+};
+const makeMicroBumpTexture = (kind: "cloth" | "coat") => {
+  const size = 128;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const warp = Math.sin((x + (y % 4) * 0.5) * Math.PI * 0.5);
+      const weft = Math.sin((y + (x % 4) * 0.5) * Math.PI * 0.5);
+      const fleck = Math.sin(x * 1.71 + y * 2.37) * 0.12;
+      const relief = kind === "cloth"
+        ? 128 + (warp * 5 + weft * 5 + fleck * 4)
+        : 128 + (Math.sin(x * 0.31 + y * 0.83) * 3 + fleck * 3);
+      const offset = (y * size + x) * 4;
+      data[offset] = relief;
+      data[offset + 1] = relief;
+      data[offset + 2] = relief;
+      data[offset + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(kind === "cloth" ? 3 : 2, kind === "cloth" ? 3 : 2);
+  texture.needsUpdate = true;
+  return texture;
+};
+const characterClothBump = makeMicroBumpTexture("cloth");
+const horseCoatBump = makeMicroBumpTexture("coat");
+const playerModelLoader = new GLTFLoader();
+let playerAnimationMixer: THREE.AnimationMixer | undefined;
+let activePlayerAnimation: THREE.AnimationAction | undefined;
+let playerHandBones: [THREE.Bone | undefined, THREE.Bone | undefined] = [undefined, undefined];
+const playerRidingBones = new Map<string, THREE.Bone>();
+const playerRidingPoseBase = new Map<string, THREE.Quaternion>();
+let playerRidingPoseCaptured = false;
+const playerRidingOffsets = new Map<string, THREE.Quaternion>([
+  ["thigh_l", new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, 0.24))],
+  ["thigh_r", new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, -0.24))],
+]);
+const playerRidingLegPose = new Map<string, THREE.Quaternion>([
+  ["thigh_l", new THREE.Quaternion(0.638, 0.12, -0.015, 0.761).normalize()],
+  ["calf_l", new THREE.Quaternion(0.671, -0.07, 0.064, 0.735).normalize()],
+  ["foot_l", new THREE.Quaternion(-0.479, 0.079, 0.04, 0.873).normalize()],
+  ["thigh_r", new THREE.Quaternion(0.643, -0.053, 0.007, 0.764).normalize()],
+  ["calf_r", new THREE.Quaternion(0.665, -0.038, 0.034, 0.745).normalize()],
+  ["foot_r", new THREE.Quaternion(-0.479, 0.042, -0.079, 0.873).normalize()],
+]);
+const playerAnimationActions = new Map<string, THREE.AnimationAction>();
+playerModelLoader.load(
+  `${import.meta.env.BASE_URL}models/neelan_main_character.glb`,
+  (gltf) => {
+    const character = fitImportedModel(gltf.scene, 1.78, Math.PI);
+    character.traverse((part) => {
+      if (part instanceof THREE.Bone) {
+        const boneName = part.name.toLowerCase();
+        if (boneName === "hand_l") playerHandBones[0] = part;
+        if (boneName === "hand_r") playerHandBones[1] = part;
+        if (["spine_01", "spine_02", "thigh_l", "thigh_r", "calf_l", "calf_r", "foot_l", "foot_r"].includes(boneName))
+          playerRidingBones.set(boneName, part);
+      }
+      if (!(part instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(part.material) ? part.material : [part.material];
+      materials.forEach((material) => {
+        if (!(material instanceof THREE.MeshStandardMaterial)) return;
+        material.bumpMap = characterClothBump;
+        material.bumpScale = 0.012;
+        material.roughness = Math.max(material.roughness, 0.86);
+        material.needsUpdate = true;
+      });
+    });
+    const basePose = new THREE.Group();
+    basePose.name = "neelan-main-character";
+    basePose.add(character);
+    playerPose.add(basePose);
+    playerPoseModels.base = basePose;
+    playerAnimationMixer = new THREE.AnimationMixer(character);
+    for (const clip of gltf.animations)
+      playerAnimationActions.set(clip.name.toLowerCase(), playerAnimationMixer.clipAction(clip));
+    console.info(`Loaded Neelan character with ${gltf.animations.length} clips`);
+  },
+  undefined,
+  (error) => {
+    console.error("Could not load neelan_main_character.glb", error);
+    // Restore the built-in character if the model file is unavailable.
+    for (const child of playerVisual.children) {
+      if (child !== playerPose) child.visible = true;
+    }
+    for (const anchors of playerLimbAnchors) {
+      anchors.traverse((part) => {
+        if (part instanceof THREE.Mesh) part.visible = true;
+      });
+    }
+  },
+);
 scene.add(player);
 const swimWake = new THREE.Group();
 for (const radius of [0.48, 0.78]) {
@@ -5548,23 +5807,70 @@ vehicles.pop();
 scene.remove(horseTemplate.group);
 const playerHorse = horseTemplate.horse;
 playerHorse.children.forEach((child) => (child.position.z += 2.18));
+const legacyPlayerHorseParts = [...playerHorse.children];
+const horseAssetRoot = new THREE.Group();
+horseAssetRoot.rotation.y = Math.PI;
+playerHorse.add(horseAssetRoot);
+let horseAnimationMixer: THREE.AnimationMixer | undefined;
+let activeHorseAnimation: THREE.AnimationAction | undefined;
+let horseNoseBone: THREE.Bone | undefined;
+const horseAnimationActions = new Map<string, THREE.AnimationAction>();
+const horseModelLoader = new GLTFLoader();
+horseModelLoader.load(
+  `${import.meta.env.BASE_URL}models/horse_rajan.glb`,
+  (gltf) => {
+    const horseModel = fitImportedModel(gltf.scene, 1.85);
+    horseModel.traverse((part) => {
+      if (part instanceof THREE.SkinnedMesh && !horseNoseBone) {
+        horseNoseBone = part.skeleton.bones.find((bone) => bone.name.toLowerCase() === "nose");
+      }
+    });
+    horseModel.traverse((part) => {
+      if (!(part instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(part.material) ? part.material : [part.material];
+      materials.forEach((material) => {
+        if (!(material instanceof THREE.MeshStandardMaterial)) return;
+        material.color.setScalar(1);
+        material.emissiveMap = null;
+        material.emissive.set("#000000");
+        material.emissiveIntensity = 0;
+        material.metalness = 0;
+        material.bumpMap = horseCoatBump;
+        material.bumpScale = 0.009;
+        material.roughness = 0.88;
+        material.needsUpdate = true;
+      });
+    });
+    horseAssetRoot.add(horseModel);
+    horseAnimationMixer = new THREE.AnimationMixer(horseModel);
+    for (const clip of gltf.animations)
+      horseAnimationActions.set(clip.name.toLowerCase(), horseAnimationMixer.clipAction(clip));
+    legacyPlayerHorseParts.forEach((part) => (part.visible = false));
+    console.info(`Loaded animated horse with ${gltf.animations.length} clips`);
+  },
+  undefined,
+  (error) => console.error("Could not load horse_rajan.glb", error),
+);
 scene.add(playerHorse);
 const saddle = new THREE.Mesh(
   new THREE.BoxGeometry(0.65, 0.16, 0.7),
   new THREE.MeshStandardMaterial({ color: "#563d2b", roughness: 1 }),
 );
-saddle.position.set(0, 1.5, 0.08);
+saddle.position.set(0, 1.28, 0.08);
 playerHorse.add(saddle);
-const horseReins = new THREE.Line(
-  new THREE.BufferGeometry().setFromPoints([
-    new THREE.Vector3(-0.15, 1.65, -0.9),
-    new THREE.Vector3(-0.2, 1.8, 0.1),
-    new THREE.Vector3(0.2, 1.8, 0.1),
-    new THREE.Vector3(0.15, 1.65, -0.9),
-  ]),
-  fishingLineMaterial,
-);
-playerHorse.add(horseReins);
+const horseReins: THREE.Line[] = [];
+for (let side = 0; side < 2; side++) {
+  const points = Array.from({ length: 5 }, () => new THREE.Vector3());
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const rein = new THREE.Line(
+    geometry,
+    new THREE.LineBasicMaterial({ color: "#503a29", transparent: true, opacity: 0.92 }),
+  );
+  rein.frustumCulled = false;
+  rein.visible = false;
+  playerHorse.add(rein);
+  horseReins.push(rein);
+}
 playerHorse.position.set(8, terrainHeight(8, 14), 14);
 const horseWalker: Walker = { x: 8, z: 14, path: [], waypoint: 0 };
 let horseMode: "waiting" | "coming" | "ridden" = "waiting";
@@ -5905,6 +6211,7 @@ const closeShop = () => {
   syncMobileControls();
 };
 let consuming: { kind: FoodKind; remaining: number } | undefined;
+let playerGestureUntil = 0;
 let lastShopDay = 0;
 const heldBanana = makeBanana();
 const heldCoconut = makeDrinkingCoconut();
@@ -6257,6 +6564,7 @@ const talkNearbyVillager = () => {
     ([x, z]) => Math.hypot(playerState.x - x, playerState.z - z) < 3,
   );
   if (activity) {
+    playerGestureUntil = performance.now() + 2200;
     setToast(activity[3]);
     return;
   }
@@ -6268,6 +6576,7 @@ const talkNearbyVillager = () => {
       ) < 2.8,
   );
   if (!villager) return;
+  playerGestureUntil = performance.now() + 2200;
   const places: Record<VillageActivity, string> = {
     home: "home",
     market: "the market",
@@ -6979,6 +7288,126 @@ trees.forEach((tree, index) => {
     ),
   );
 });
+const importedTreeFiles = [
+  "banana_tree1.glb",
+  "banana_tree2.glb",
+  "coconut_tree1.glb",
+  "coconut_tree2.glb",
+];
+const importedBushFiles = ["bush_1.glb", "bush_2.glb", "bush_3.glb"];
+const chestnutLeafTexture = new THREE.TextureLoader().load(
+  `${import.meta.env.BASE_URL}models/chestnut_leaves.jpg`,
+);
+chestnutLeafTexture.colorSpace = THREE.SRGBColorSpace;
+const chestnutBarkTexture = new THREE.TextureLoader().load(
+  `${import.meta.env.BASE_URL}models/chestnut_bark.jpg`,
+);
+chestnutBarkTexture.colorSpace = THREE.SRGBColorSpace;
+const chestnutTreeTemplate = new Promise<THREE.Group>((resolve, reject) => {
+  new OBJLoader().load(
+    `${import.meta.env.BASE_URL}models/chestnut_tree.obj`,
+    (object) => {
+      object.traverse((part) => {
+        if (!(part instanceof THREE.Mesh)) return;
+        if (!part.geometry.attributes.normal) part.geometry.computeVertexNormals();
+        const sourceMaterials = Array.isArray(part.material) ? part.material : [part.material];
+        const materials = sourceMaterials.map((source) => {
+          const leaves = source.name.toLowerCase() === "green";
+          return new THREE.MeshStandardMaterial({
+            map: leaves ? chestnutLeafTexture : chestnutBarkTexture,
+            color: leaves ? "#c6d49a" : "#b4a28d",
+            roughness: leaves ? 0.92 : 0.98,
+            side: leaves ? THREE.DoubleSide : THREE.FrontSide,
+          });
+        });
+        part.material = Array.isArray(part.material) ? materials : materials[0];
+        part.castShadow = true;
+        part.receiveShadow = true;
+      });
+      resolve(object);
+    },
+    undefined,
+    reject,
+  );
+});
+Promise.all([
+  Promise.all(importedTreeFiles.map(loadAssetTemplate)),
+  Promise.all(importedBushFiles.map(loadAssetTemplate)),
+  loadAssetTemplate("group_rocks1.glb"),
+  chestnutTreeTemplate,
+])
+  .then(([treeModels, bushModels, rockTemplate, chestnutTree]) => {
+    trees.forEach((tree, index) => {
+      if (index % 2 !== 0) return;
+      const useChestnut = index % 6 === 0;
+      const model = useChestnut
+        ? fitImportedModel(chestnutTree.clone(true), 5.7)
+        : fitImportedModel(treeModels[index % treeModels.length].clone(true), 6.1);
+      tree.clear();
+      tree.add(model);
+      vegetationWindSways.push({
+        group: tree,
+        phase: index * 2.17,
+        amplitude: 0.018 + (index % 5) * 0.002,
+        baseX: tree.rotation.x,
+        baseZ: tree.rotation.z,
+      });
+    });
+
+    const bushOffsets = [
+      [-1.65, 1.2],
+      [1.7, 1.05],
+      [-1.2, -1.65],
+    ];
+    trees.forEach((tree, index) => {
+      if (index % 4 !== 2) return;
+      const [offsetX, offsetZ] = bushOffsets[index % bushOffsets.length];
+      const x = tree.position.x + offsetX;
+      const z = tree.position.z + offsetZ;
+      if (distanceToRoad(x, z) < 2.8 || distanceToRiver(x, z) < 5.5) return;
+      const bush = new THREE.Group();
+      bush.position.set(x, terrainHeight(x, z), z);
+      bush.rotation.y = (index * 1.71) % (Math.PI * 2);
+      bush.add(index % 8 === 2
+        ? fitImportedModel(chestnutTree.clone(true), 2.1)
+        : fitImportedModel(
+            bushModels[index % bushModels.length].clone(true),
+            1.15 + (index % 3) * 0.12,
+          ));
+      scene.add(bush);
+      vegetationWindSways.push({
+        group: bush,
+        phase: index * 1.31,
+        amplitude: 0.028,
+        baseX: bush.rotation.x,
+        baseZ: bush.rotation.z,
+      });
+    });
+
+    for (const rock of scatteredRocks) {
+      const model = rockTemplate.clone(true);
+      const bounds = new THREE.Box3().setFromObject(model);
+      const size = bounds.getSize(new THREE.Vector3());
+      const modelScale = (rock.scale.x * 2.2) / Math.max(size.x, 0.001);
+      model.scale.setScalar(modelScale);
+      model.position.set(
+        -((bounds.min.x + bounds.max.x) * 0.5) * modelScale,
+        -bounds.min.y * modelScale,
+        -((bounds.min.z + bounds.max.z) * 0.5) * modelScale,
+      );
+      const cluster = new THREE.Group();
+      cluster.position.set(
+        rock.position.x,
+        terrainHeight(rock.position.x, rock.position.z),
+        rock.position.z,
+      );
+      cluster.rotation.copy(rock.rotation);
+      cluster.add(model);
+      scene.remove(rock);
+      scene.add(cluster);
+    }
+  })
+  .catch((error) => console.warn("Could not load imported environment assets", error));
 // Replace the remaining decorative sapling balls without changing their reserved positions.
 scene.children.forEach((object, index) => {
   if (!(object instanceof THREE.Group) || trees.includes(object)) return;
@@ -7415,7 +7844,7 @@ const snapshotCrowd = () => {
   vehicles.forEach((vehicle) => add(vehicle.group, 0.8));
   add(manchal, 0.85);
   if (horseMode !== "ridden") add(playerHorse, 0.55);
-  add(player, horseMode === "ridden" ? 0.55 : 0.32);
+  add(player, horseMode === "ridden" ? 0.82 : 0.32);
 };
 const motionDetour = (
   start: readonly [number, number],
@@ -7491,6 +7920,13 @@ const animate = () => {
   if (gameStarted) simulationTime += delta;
   const elapsed = simulationTime;
   for (const uniform of vegetationWindUniforms) uniform.value = elapsed;
+  const windStrength = reducedMotion.matches ? 0 : 0.65 + Math.sin(elapsed * 0.23) * 0.22;
+  for (const sway of vegetationWindSways) {
+    const gust = Math.sin(elapsed * 0.72 + sway.phase) * sway.amplitude * windStrength;
+    sway.group.rotation.x = sway.baseX + gust * 0.7;
+    sway.group.rotation.z =
+      sway.baseZ + Math.cos(elapsed * 0.61 + sway.phase) * sway.amplitude * windStrength;
+  }
   const rippleX = (elapsed * 0.004) % 1;
   const rippleY = (elapsed * -0.0025) % 1;
   for (const map of [
@@ -7697,8 +8133,8 @@ const animate = () => {
       const speed =
         (horseMode === "ridden"
           ? keys.has("shift")
-            ? 13
-            : 8
+            ? 6.8
+            : 3.4
           : swimmingAtStart
             ? keys.has("shift")
               ? 3.2
@@ -7706,8 +8142,8 @@ const animate = () => {
             : waterAtStart
               ? 3.1
               : keys.has("shift")
-                ? 9
-                : 5.7) *
+                ? 5.1
+                : 2.65) *
         (1 - Math.min(0.3, toddyState.level * 0.12));
       const moveX =
         (forwardX * forwardInput + rightX * sideInput) / inputLength;
@@ -7725,7 +8161,7 @@ const animate = () => {
         const next = moveBody(
           [playerState.x, playerState.z],
           [nextX, nextZ],
-          horseMode === "ridden" ? 0.55 : 0.32,
+          horseMode === "ridden" ? 0.82 : 0.32,
           worldSolids,
           crowdBodies,
         );
@@ -7733,7 +8169,7 @@ const animate = () => {
         playerState.z = next[1];
       }
       if (horseMode === "ridden" && horseSafe)
-        horseStride += speed * delta * 3.5;
+        horseStride += speed * delta * (keys.has("shift") ? 1.55 : 2.35);
       // The character's face points along local -Z; turn that side toward the travel vector.
       characterTravelDirection.set(moveX, 0, moveZ).normalize();
       player.quaternion.setFromUnitVectors(
@@ -7802,7 +8238,7 @@ const animate = () => {
         ? waterInfo.surfaceY - 0.15
         : terrainHeight(playerState.x, playerState.z);
     // Use hysteresis at the bank and do not pull a jumping player down through the air.
-    const deepWater = Boolean(
+    const deepWater = horseMode !== "ridden" && Boolean(
       waterInfo &&
       waterInfo.depth >= (playerState.swimming ? 0.35 : 0.55) &&
       playerState.y <= waterInfo.surfaceY + 1,
@@ -7852,13 +8288,13 @@ const animate = () => {
     wasSwimming = deepWater;
     playerVisual.rotation.x = THREE.MathUtils.damp(
       playerVisual.rotation.x,
-      playerState.swimming ? -1.05 : 0,
+      horseMode !== "ridden" && playerState.swimming ? -1.05 : 0,
       6,
       delta,
     );
     player.position.set(
       playerState.x,
-      playerState.y + (horseMode === "ridden" ? 1.25 : 0),
+      playerState.y + (horseMode === "ridden" ? 1.2 : 0),
       playerState.z,
     );
     if (horseMode === "ridden") {
@@ -7874,18 +8310,165 @@ const animate = () => {
         arm.rotation.x = 0.9;
         arm.rotation.z = 0;
       });
-      horseTemplate.horseLegs.forEach(
-        (leg, index) =>
-          (leg.rotation.x =
-            inputLength > 0
-              ? Math.sin(horseStride + index * Math.PI * 0.5) * 0.45
-              : 0),
-      );
     } else {
       playerLegs.forEach((leg) => (leg.rotation.z = 0));
-      if (horseMode === "waiting")
-        horseTemplate.horseLegs.forEach((leg) => (leg.rotation.x = 0));
     }
+    const ridingInput = inputLength > 0.04;
+    if (horseAnimationMixer) {
+      const horseAnimationName = horseMode === "ridden" && ridingInput
+        ? keys.has("shift") ? "run" : "trot"
+        : horseMode === "coming" ? "walk" : "idle";
+      const nextHorseAction = horseAnimationActions.get(horseAnimationName)
+        ?? horseAnimationActions.get("idle");
+      if (nextHorseAction && nextHorseAction !== activeHorseAnimation) {
+        activeHorseAnimation?.fadeOut(0.2);
+        nextHorseAction.reset().fadeIn(0.2).play();
+        activeHorseAnimation = nextHorseAction;
+      }
+      horseAnimationMixer.update(delta);
+    }
+    const playerIsWalking =
+      inputLength > 0.04 && !playerState.swimming && horseMode !== "ridden";
+    const selectedPlayerPose = playerPoseModels.base;
+    if (selectedPlayerPose)
+      selectedPlayerPose.visible = true;
+    if (playerAnimationMixer) {
+      const animationName = horseMode === "ridden"
+        ? "sitting_idle"
+        : playerState.swimming
+          ? "swim_fwd"
+          : !playerState.grounded
+            ? "jump_air"
+            : inputLength > 0.04 && keys.has("shift")
+              ? "sprint"
+              : inputLength > 0.04
+                ? "walk"
+                : performance.now() < playerGestureUntil
+                  ? "idle_talking"
+                  : consuming
+                    ? "consume_item"
+                    : "idle_subtle";
+      const nextAction = playerAnimationActions.get(animationName)
+        ?? playerAnimationActions.get(animationName === "sprint" ? "run_anime" : "idle_subtle");
+      if (nextAction && nextAction !== activePlayerAnimation) {
+        if (horseMode === "ridden") {
+          activePlayerAnimation?.stop();
+          nextAction.reset().play();
+          nextAction.time = 0.18;
+          nextAction.paused = true;
+          playerRidingPoseBase.clear();
+          playerRidingPoseCaptured = false;
+        } else {
+          activePlayerAnimation?.fadeOut(0.18);
+          nextAction.reset().fadeIn(0.18).play();
+          playerRidingPoseCaptured = false;
+        }
+        activePlayerAnimation = nextAction;
+      }
+      if (
+        horseMode === "ridden" &&
+        nextAction &&
+        nextAction === activePlayerAnimation &&
+        !nextAction.paused
+      ) {
+        nextAction.time = 0.18;
+        nextAction.paused = true;
+        playerRidingPoseBase.clear();
+        playerRidingPoseCaptured = false;
+      } else if (
+        horseMode !== "ridden" &&
+        nextAction &&
+        nextAction === activePlayerAnimation &&
+        nextAction.paused
+      ) {
+        nextAction.reset().fadeIn(0.18).play();
+        playerRidingPoseCaptured = false;
+      }
+      playerAnimationMixer.update(delta);
+    }
+    if (horseMode === "ridden") {
+      if (!playerRidingPoseCaptured && playerRidingBones.size > 0) {
+        for (const [name, bone] of playerRidingBones)
+          playerRidingPoseBase.set(name, bone.quaternion.clone());
+        playerRidingPoseCaptured = true;
+      }
+      for (const [name, bone] of playerRidingBones) {
+        const base = playerRidingPoseBase.get(name);
+        if (!base) continue;
+        bone.quaternion.copy(playerRidingLegPose.get(name) ?? base);
+        const offset = playerRidingOffsets.get(name);
+        if (offset) bone.quaternion.multiply(offset);
+      }
+    } else {
+      playerRidingPoseCaptured = false;
+    }
+    player.updateMatrixWorld(true);
+    playerHorse.updateMatrixWorld(true);
+    horseReins.forEach((rein, side) => {
+      const hand = playerHandBones[side];
+      const points = rein.geometry.attributes.position as THREE.BufferAttribute;
+      const visible = horseMode === "ridden" && Boolean(hand && horseNoseBone);
+      rein.visible = visible;
+      if (!visible || !hand || !horseNoseBone) return;
+      const start = playerHorse.worldToLocal(horseNoseBone.getWorldPosition(new THREE.Vector3()));
+      start.x += side === 0 ? -0.065 : 0.065;
+      start.y -= 0.035;
+      const end = playerHorse.worldToLocal(hand.getWorldPosition(new THREE.Vector3()));
+      for (let step = 0; step < points.count; step++) {
+        const t = step / (points.count - 1);
+        const sag = Math.sin(Math.PI * t) * 0.08;
+        points.setXYZ(
+          step,
+          THREE.MathUtils.lerp(start.x, end.x, t),
+          THREE.MathUtils.lerp(start.y, end.y, t) - sag,
+          THREE.MathUtils.lerp(start.z, end.z, t),
+        );
+      }
+      points.needsUpdate = true;
+      rein.geometry.computeBoundingSphere();
+    });
+    const idleBreath = reducedMotion.matches
+      ? 0
+      : Math.sin(elapsed * 2.1) * 0.003;
+    const ridingGait = horseMode === "ridden" && inputLength > 0.04;
+    const stepBounce = playerIsWalking
+      ? Math.abs(Math.sin(elapsed * 10)) * 0.028
+      : ridingGait && !reducedMotion.matches
+        ? Math.abs(Math.sin(horseStride * 1.35)) * (keys.has("shift") ? 0.04 : 0.025)
+        : 0;
+    playerPose.position.y = THREE.MathUtils.damp(
+      playerPose.position.y,
+      stepBounce,
+      10,
+      delta,
+    );
+    playerPose.rotation.x = THREE.MathUtils.damp(
+      playerPose.rotation.x,
+      horseMode === "ridden"
+        ? -0.08
+        : consuming
+          ? -0.08
+          : equipment.active > 0
+            ? 0.045
+            : playerState.velocityY > 1
+              ? -0.065
+              : 0,
+      7,
+      delta,
+    );
+    playerPose.rotation.z = THREE.MathUtils.damp(
+      playerPose.rotation.z,
+      horseMode === "ridden"
+        ? 0
+        : playerIsWalking && !reducedMotion.matches
+        ? Math.sin(elapsed * 5) * 0.018
+        : !reducedMotion.matches && !consuming
+          ? Math.sin(elapsed * 1.4) * 0.006
+          : 0,
+      7,
+      delta,
+    );
+    playerPose.scale.y = 1 + idleBreath;
     world.dataset.horse = horseMode;
     swimWake.visible = playerState.swimming && waterInfo !== undefined;
     if (swimWake.visible && waterInfo) {
