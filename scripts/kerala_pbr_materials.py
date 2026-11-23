@@ -633,3 +633,41 @@ def apply_world_box_uvs(obj, tile_meters=2.0):
 
     bm.to_mesh(mesh)
     bm.free()
+
+
+def export_optimized_glb(filepath, image_quality=82):
+    """
+    Exports the currently selected object(s) as a web-optimized GLB using native
+    WebP/JPEG texture compression (supported natively by Three.js GLTFLoader with
+    zero extra runtime decoder) so 15-19 MB buildings shrink to ~1-2 MB!
+    Safely adapts kwargs to whichever Blender 3.x/4.x version is installed.
+    """
+    props = set(bpy.ops.export_scene.gltf.get_rna_type().properties.keys())
+    kwargs = {
+        "filepath": filepath,
+        "export_format": "GLB",
+        "use_selection": True,
+        "export_yup": True,
+        "export_apply": True,
+        "export_morph": False,
+        "export_animations": False,
+    }
+    if "export_image_format" in props:
+        # Prefer WEBP (smallest & crispest in Three.js/Chrome/Safari), fallback to JPEG
+        enum_ids = {
+            e.identifier
+            for e in bpy.ops.export_scene.gltf.get_rna_type().properties["export_image_format"].enum_items
+        }
+        if "WEBP" in enum_ids:
+            kwargs["export_image_format"] = "WEBP"
+        elif "JPEG" in enum_ids:
+            kwargs["export_image_format"] = "JPEG"
+    if "export_image_quality" in props:
+        kwargs["export_image_quality"] = image_quality
+    elif "export_jpeg_quality" in props:
+        kwargs["export_jpeg_quality"] = image_quality
+    if "export_webp_fallback" in props:
+        kwargs["export_webp_fallback"] = False
+
+    bpy.ops.export_scene.gltf(**kwargs)
+

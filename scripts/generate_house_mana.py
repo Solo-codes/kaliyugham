@@ -335,16 +335,8 @@ def export_collection_glb(col, asset_name):
     bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
 
     out_path = os.path.join(EXPORT_DIR, f"{asset_name}.glb")
-    bpy.ops.export_scene.gltf(
-        filepath=out_path,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-        export_apply=True,
-        export_morph=False,
-        export_animations=False,
-    )
-    print(f"Exported photorealistic PBR Mana asset: {out_path}")
+    kpbr.export_optimized_glb(out_path, image_quality=82)
+    print(f"Exported web-optimized 1K PBR Mana asset: {out_path}")
 
 
 # ==============================================================================

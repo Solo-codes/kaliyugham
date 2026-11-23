@@ -336,16 +336,8 @@ def build_kerala_temple(mats):
     bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
 
     out_path = os.path.join(EXPORT_DIR, "kerala_temple.glb")
-    bpy.ops.export_scene.gltf(
-        filepath=out_path,
-        export_format="GLB",
-        use_selection=True,
-        export_yup=True,
-        export_apply=True,
-        export_morph=False,
-        export_animations=False,
-    )
-    print("Exported authentic 18th-century Kerala Village Temple (1K PBR):", out_path)
+    kpbr.export_optimized_glb(out_path, image_quality=82)
+    print("Exported web-optimized 1K PBR Kerala Village Temple:", out_path)
 
 
 if __name__ == "__main__":
