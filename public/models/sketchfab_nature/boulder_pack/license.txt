@@ -1,0 +1,11 @@
+Model Information:
+* title:	Boulder Basics 3D Rock Collection
+* source:	https://sketchfab.com/3d-models/boulder-basics-3d-rock-collection-62c06275a3f3453f8bd3ac290404550f
+* author:	CuberRownak576 (https://sketchfab.com/punamrajbhar24)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Boulder Basics 3D Rock Collection" (https://sketchfab.com/3d-models/boulder-basics-3d-rock-collection-62c06275a3f3453f8bd3ac290404550f) by CuberRownak576 (https://sketchfab.com/punamrajbhar24) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

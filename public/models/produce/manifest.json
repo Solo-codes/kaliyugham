@@ -1,0 +1,82 @@
+{
+  "banana_ripe": {
+    "category": "fruit",
+    "height_m": 0.18,
+    "mass_kg": 0.15
+  },
+  "banana_bunch": {
+    "category": "fruit",
+    "height_m": 0.54,
+    "mass_kg": 3.8
+  },
+  "coconut_tender": {
+    "category": "fruit",
+    "height_m": 0.25,
+    "mass_kg": 1.4
+  },
+  "coconut_open": {
+    "category": "fruit",
+    "height_m": 0.22,
+    "mass_kg": 1.1
+  },
+  "jackfruit": {
+    "category": "fruit",
+    "height_m": 0.28,
+    "mass_kg": 9.5
+  },
+  "mango": {
+    "category": "fruit",
+    "height_m": 0.12,
+    "mass_kg": 0.32
+  },
+  "pineapple": {
+    "category": "fruit",
+    "height_m": 0.3,
+    "mass_kg": 1.6
+  },
+  "papaya": {
+    "category": "fruit",
+    "height_m": 0.24,
+    "mass_kg": 1.4
+  },
+  "guava": {
+    "category": "fruit",
+    "height_m": 0.085,
+    "mass_kg": 0.18
+  },
+  "brinjal": {
+    "category": "vegetable",
+    "height_m": 0.18,
+    "mass_kg": 0.28
+  },
+  "okra": {
+    "category": "vegetable",
+    "height_m": 0.14,
+    "mass_kg": 0.03
+  },
+  "bottle_gourd": {
+    "category": "vegetable",
+    "height_m": 0.36,
+    "mass_kg": 1.2
+  },
+  "bitter_gourd": {
+    "category": "vegetable",
+    "height_m": 0.2,
+    "mass_kg": 0.18
+  },
+  "tapioca": {
+    "category": "vegetable",
+    "height_m": 0.28,
+    "mass_kg": 0.65
+  },
+  "red_onion": {
+    "category": "vegetable",
+    "height_m": 0.085,
+    "mass_kg": 0.14
+  },
+  "tomato": {
+    "category": "vegetable",
+    "height_m": 0.075,
+    "mass_kg": 0.13
+  }
+}

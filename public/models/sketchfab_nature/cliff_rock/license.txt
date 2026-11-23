@@ -1,0 +1,11 @@
+Model Information:
+* title:	Sandstone Cliff Rock | Game Ready | PBR
+* source:	https://sketchfab.com/3d-models/sandstone-cliff-rock-game-ready-pbr-951aa56853df436e91da66a8720073df
+* author:	Vishal Pandey (https://sketchfab.com/vishalpandey2311)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Sandstone Cliff Rock | Game Ready | PBR" (https://sketchfab.com/3d-models/sandstone-cliff-rock-game-ready-pbr-951aa56853df436e91da66a8720073df) by Vishal Pandey (https://sketchfab.com/vishalpandey2311) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

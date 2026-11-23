@@ -1,0 +1,11 @@
+Model Information:
+* title:	Realistic HD Bottlebrush rigidus (12/20)
+* source:	https://sketchfab.com/3d-models/realistic-hd-bottlebrush-rigidus-1220-5fa741bcda4c4c269f7fc1374e5fa544
+* author:	PlantCatalog (https://sketchfab.com/PlantCatalog)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "Realistic HD Bottlebrush rigidus (12/20)" (https://sketchfab.com/3d-models/realistic-hd-bottlebrush-rigidus-1220-5fa741bcda4c4c269f7fc1374e5fa544) by PlantCatalog (https://sketchfab.com/PlantCatalog) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

@@ -1,7 +1,7 @@
 import "./style.css";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { OBJLoader } from "three/addons/loaders/OBJLoader.js";
+import { clone as cloneSkeleton } from "three/addons/utils/SkeletonUtils.js";
 import {
   bridgeHeightAt,
   createBridgeSpan,
@@ -13,12 +13,62 @@ import { sampleCastNet } from "./world/castNet";
 import { advanceCoconutHarvest } from "./world/coconut";
 import { advancePaddyWork } from "./world/paddyWork";
 import {
+  applyNpcCrowdPhysics,
+  getDailyScheduleState,
+  updateKalariPracticePhysics,
+} from "./world/npcDailyPhysics";
+import {
+  archetypeFromNpcKey,
+  CHARACTER_PHYSICS_PROFILES,
+  updateCharacterMannerisms,
+  type CharacterMannerismActor,
+} from "./world/npcCharacterPhysics";
+import {
+  createNpcActivityActor,
+  findRigBone,
+  isNpcPausedForActivity,
+  isNpcSprinting,
+  updateNpcActivities,
+  type NpcActivityActor,
+} from "./world/npcActivities";
+import {
+  buildKeralaRoadSystem,
+  createDetailedRoadGeometry,
+  getKeralaRoadTypeForRoute,
+  KERALA_ROAD_SPECS,
+  updateKeralaRoadWeather,
+} from "./world/keralaRoads";
+import { createKeralaMeadowGroundTextures } from "./world/keralaGround";
+import {
+  upgradeKeralaTerrainMaterial,
+  applyKeralaSurfaceTextures,
+} from "./world/keralaTerrainSurface";
+import { buildSketchfabNatureSystem } from "./world/sketchfabNature";
+import { createMixamoNpcSystem } from "./world/mixamoNpcAI";
+import { placeWorldCloth, updateClothPhysics } from "./world/clothPhysics";
+import { buildKeralaHousesAndCompounds } from "./world/keralaCompounds";
+import {
+  createKeralaAnimalSystem,
+  updateKeralaAnimalSystem,
+} from "./world/keralaAnimals";
+import {
+  attachKalavandiOxAnimation,
+  calibrateKalavandiWheels,
+  computeKalavandiStepSpeed,
+  KALAVANDI_CRUISE_SPEED,
+  KALAVANDI_LANDLORD_SPEED,
+  updateKalavandiPhysics,
+  type KalavandiPhysicsState,
+  type KalavandiTerrainSampler,
+} from "./world/kalavandiPhysics";
+import {
   sampleDayNight,
   simulationDay,
   WeatherCycle,
 } from "./world/environment";
 import {
   baseTerrainHeight,
+  bridgeRoadPoints,
   harvestPalmSites,
   kalariSite,
   landlordEstateSite,
@@ -38,7 +88,6 @@ import {
 } from "./world/layout";
 import {
   createRoadNetwork,
-  createRoadRibbonGeometry,
   createRoadSurfaceHeight,
 } from "./world/roads";
 import { createTerrainGrid, flattenTerrainArea } from "./world/terrain";
@@ -60,7 +109,6 @@ import {
   horseAction,
   isWorkday,
   routeTo,
-  sampleKalariDrill,
 } from "./world/routines";
 import type { Duty, InspectionStop } from "./world/routines";
 import { createForestHabitat } from "./world/habitat";
@@ -118,9 +166,6 @@ import {
 import type { Solid, Body } from "./world/collision";
 import { makeFlowers, makeTemple, templePrayerHours } from "./world/temple";
 import {
-  addVegetationWind,
-  makeDetailedTree,
-  makeLeafAtlas,
   makeOutdoorEnvironment,
   makePleatedWrap,
   makeRidgeGeometry,
@@ -129,7 +174,7 @@ import {
 } from "./world/realism";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
-import { SSAOPass } from "three/addons/postprocessing/SSAOPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import {
   advanceToddy,
@@ -150,7 +195,6 @@ import {
 } from "./world/traffic";
 import type { CartApproach, FarmDelivery } from "./world/traffic";
 import {
-  makeBananaPlant,
   makeHandheldLeaf,
   makeRainUmbrella,
 } from "./world/ruralProps";
@@ -232,6 +276,8 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.12;
@@ -270,11 +316,11 @@ scene.add(hemisphere);
 const sun = new THREE.DirectionalLight("#fff0cf", 3.2);
 sun.position.set(-38, 64, 22);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
-sun.shadow.camera.left = -32;
-sun.shadow.camera.right = 32;
-sun.shadow.camera.top = 32;
-sun.shadow.camera.bottom = -32;
+sun.shadow.mapSize.set(1536, 1536);
+sun.shadow.camera.left = -26;
+sun.shadow.camera.right = 26;
+sun.shadow.camera.top = 26;
+sun.shadow.camera.bottom = -26;
 sun.shadow.normalBias = 0.025;
 sun.shadow.bias = -0.00015;
 sun.shadow.radius = 2;
@@ -406,8 +452,10 @@ const isInsidePaddyReserve = (x: number, z: number, padding = 0) =>
       Math.abs(z - fieldZ) < 5 + padding,
   );
 const isInsideKalariReserve = (x: number, z: number, padding = 0) =>
-  Math.abs(x - kalariSite[0]) < 5.5 + padding &&
-  Math.abs(z - kalariSite[1]) < 4.3 + padding;
+  Math.abs(x - kalariSite[0]) < 7.0 + padding &&
+  Math.abs(z - kalariSite[1]) < 4.6 + padding;
+const isKalariAnimalKeepOut = (x: number, z: number) =>
+  isInsideKalariReserve(x, z, 1.5);
 const isInsideTeaShop = (x: number, z: number, padding = 0) =>
   [teaShopSite, toddyShopSite].some(
     ([sx, sz]) =>
@@ -447,17 +495,19 @@ const templeTerrain = flattenTerrainArea(teaTerrain, templeSite, 7, 7, 2);
 const villageTerrain = flattenTerrainArea(
   templeTerrain,
   kalariSite,
-  5.5,
-  4.3,
-  2,
+  7.0,
+  4.6,
+  2.2,
 );
-const groundGrid = createTerrainGrid(190, 220, villageTerrain);
-const terrainHeight = groundGrid.heightAt;
-const roadSurfaceHeight = terrainHeight;
-const roadMeshHeight = createRoadSurfaceHeight(terrainHeight, distanceToRiver);
+const terrainSlope = (x: number, z: number) =>
+  Math.max(
+    Math.abs(villageTerrain(x + 2.5, z) - villageTerrain(x - 2.5, z)),
+    Math.abs(villageTerrain(x, z + 2.5) - villageTerrain(x, z - 2.5)),
+  ) / 5;
 const buildingSites = placeHouseLots(requestedBuildingSites, {
   distanceToRoad,
   isAllowed: (x, z) =>
+    terrainSlope(x, z) <= 0.3 &&
     distanceToRiver(x, z) >= 8 &&
     !isInsideTeaShop(x, z, 4) &&
     !insideMarketDistrict(x, z, 4) &&
@@ -535,6 +585,7 @@ const scatteredHomes = planHomesteads(
   (x, z) =>
     Math.abs(x) < 80 &&
     Math.abs(z) < 80 &&
+    terrainSlope(x, z) <= 0.25 &&
     !getWaterInfo(x, z) &&
     distanceToRiver(x, z) > 8 &&
     distanceToRoad(x, z) > 2.8 &&
@@ -573,6 +624,25 @@ const allBuildingSites: [number, number][] = [
   ...scatteredHomes.map((home) => [...home.site] as [number, number]),
   landlordEstateSite,
 ];
+let leveledTerrain = flattenTerrainArea(
+  villageTerrain,
+  landlordEstateSite,
+  8.5,
+  8.5,
+  4.0,
+);
+for (const site of [
+  ...buildingSites,
+  ...fieldHomeSites,
+  ...scatteredHomes.map((h) => h.site),
+  ...marketSites.map(([mx, mz]) => [mx, mz] as const),
+]) {
+  leveledTerrain = flattenTerrainArea(leveledTerrain, site, 3.5, 3.5, 2.5);
+}
+const groundGrid = createTerrainGrid(190, 220, leveledTerrain);
+const terrainHeight = groundGrid.heightAt;
+const roadSurfaceHeight = terrainHeight;
+const roadMeshHeight = createRoadSurfaceHeight(terrainHeight, distanceToRiver);
 const insideNewHomesteadPath = (x: number, z: number, padding = 1.3) =>
   scatteredHomes.some((home) => {
     const dx = home.lane[0] - home.doorstep[0],
@@ -588,7 +658,7 @@ const insideNewHomesteadPath = (x: number, z: number, padding = 1.3) =>
       padding
     );
   });
-const groundGeometry = new THREE.PlaneGeometry(190, 190, 128, 128);
+const groundGeometry = new THREE.PlaneGeometry(190, 190, 160, 160);
 const positions = groundGeometry.attributes.position as THREE.BufferAttribute;
 const colors: number[] = [];
 const low = new THREE.Color("#647650");
@@ -876,52 +946,13 @@ for (let attempt = 0; attempt < 1600 && palmFronds.length < 25; attempt++) {
   createCoconutPalm(x, z, 0.85 + random() * 0.38, random() * Math.PI * 2);
 }
 
-const saplingMaterial = new THREE.MeshStandardMaterial({
-  color: "#587847",
-  roughness: 1,
-  flatShading: true,
-});
-for (let attempt = 0, planted = 0; attempt < 1200 && planted < 44; attempt++) {
-  const x = (random() - 0.5) * 158;
-  const z = (random() - 0.5) * 158;
-  if (
-    terrainHeight(x, z) < -1.5 ||
-    distanceToRoad(x, z) < 2.7 ||
-    distanceToRiver(x, z) < 4.5 ||
-    isInsidePaddyReserve(x, z, 1) ||
-    isInsideKalariReserve(x, z, 1) ||
-    isNearHarvestPalm(x, z, 2.5) ||
-    isInsideBackyardReserve(x, z, 1) ||
-    insideGarden(vegetablePlots, x, z, 1) ||
-    insideNewHomesteadPath(x, z) ||
-    isInsideTeaShop(x, z, 1) ||
-    isInsideHeritageYard(x, z) ||
-    insideTempleGround(x, z, 1) ||
-    [...allBuildingSites, ...marketSites].some(
-      ([siteX, siteZ]) => Math.hypot(x - siteX, z - siteZ) < 4.5,
-    )
-  )
-    continue;
-  const sapling = new THREE.Group();
-  const scale = 0.38 + random() * 0.35;
-  const stem = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.07, 0.12, 1.25, 5),
-    trunkMaterial,
-  );
-  stem.position.y = 0.57 * scale;
-  stem.scale.setScalar(scale);
-  sapling.add(stem);
-  const crown = new THREE.Mesh(canopyGeometry, saplingMaterial);
-  crown.position.y = 1.32 * scale;
-  crown.scale.set(0.75 * scale, 0.82 * scale, 0.75 * scale);
-  crown.castShadow = true;
-  sapling.add(crown);
-  sapling.position.set(x, terrainHeight(x, z), z);
-  scene.add(sapling);
-  planted++;
-}
+// Legacy procedural saplings removed — all bushes, ferns & trees now come exclusively from Sketchfab.
 
-const bridgeCrossing = findCrossing(roadCurves[10], riverRoute);
+const bridgeRouteIndex = roadRoutes.indexOf(bridgeRoadPoints);
+const bridgeCrossing = findCrossing(
+  roadCurves[bridgeRouteIndex >= 0 ? bridgeRouteIndex : 10],
+  riverRoute,
+);
 if (!bridgeCrossing)
   throw new Error("The bridge lane must intersect the river.");
 const bridgeSpan = createBridgeSpan(bridgeCrossing, terrainHeight);
@@ -951,7 +982,7 @@ const inspectionStops: InspectionStop[] = [
     pause: 14,
   },
   {
-    position: [9, -5.7],
+    position: [kalariSite[0] + 5, kalariSite[1] - 2],
     lookAt: kalariSite,
     label: "Watching kalari practice",
     pause: 10,
@@ -990,86 +1021,15 @@ const landlordCartRoute = new THREE.CatmullRomCurve3(
   "catmullrom",
   0.3,
 );
-const makeRoadRibbon = (
-  curve: THREE.CatmullRomCurve3,
-  width: number,
-  material: THREE.Material,
-  lift: number,
-  offset = 0,
-) => {
-  const geometry = createRoadRibbonGeometry(
-    curve,
-    width,
-    offset,
-    lift,
-    roadMeshHeight,
-    (x, z) => distanceToRiver(x, z) >= RIVER_HALF_WIDTH + 0.1,
-  );
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.receiveShadow = true;
-  scene.add(mesh);
-  return mesh;
-};
-const shoulderMaterial = new THREE.MeshStandardMaterial({
-  color: "#998263",
-  roughness: 1,
-  side: THREE.DoubleSide,
+const keralaRoadSystem = buildKeralaRoadSystem({
+  scene,
+  roadRoutes,
+  roadCurves,
+  roadMeshHeight,
+  terrainHeight,
+  distanceToRiver,
+  riverHalfWidth: RIVER_HALF_WIDTH,
 });
-const roadMaterial = new THREE.MeshStandardMaterial({
-  color: "#59432f",
-  roughness: 1,
-  side: THREE.DoubleSide,
-});
-const roadEdgeMaterial = new THREE.MeshStandardMaterial({
-  color: "#534333",
-  roughness: 1,
-  side: THREE.DoubleSide,
-});
-roadCurves.forEach((curve, index) => {
-  const isFootpath = index >= 3;
-  const width = isFootpath ? 2.4 : 4.6;
-  const trackWidth = isFootpath ? 0.9 : 3.3;
-  const rutOffset = isFootpath ? 0.3 : 0.66;
-  makeRoadRibbon(curve, width, shoulderMaterial, 0.075);
-  makeRoadRibbon(curve, trackWidth, roadMaterial, 0.105);
-  makeRoadRibbon(curve, 0.075, roadEdgeMaterial, 0.125, -rutOffset);
-  makeRoadRibbon(curve, 0.075, roadEdgeMaterial, 0.125, rutOffset);
-});
-const sharedRoadPoints = new Map<
-  string,
-  { x: number; z: number; uses: number }
->();
-for (const route of roadRoutes) {
-  for (const [x, z] of route) {
-    const key = `${x},${z}`;
-    const entry = sharedRoadPoints.get(key);
-    if (entry) entry.uses++;
-    else sharedRoadPoints.set(key, { x, z, uses: 1 });
-  }
-}
-const junctionMaterial = new THREE.MeshStandardMaterial({
-  color: "#59432f",
-  roughness: 1,
-  side: THREE.DoubleSide,
-});
-for (const junction of sharedRoadPoints.values()) {
-  if (junction.uses < 2) continue;
-  const radius = junction.uses > 2 ? 2.8 : 2.25;
-  const padGeometry = new THREE.RingGeometry(0.001, radius, 32, 4);
-  const padPositions = padGeometry.attributes.position as THREE.BufferAttribute;
-  const centerY = terrainHeight(junction.x, junction.z);
-  for (let vertex = 0; vertex < padPositions.count; vertex++) {
-    const x = junction.x + padPositions.getX(vertex);
-    const z = junction.z - padPositions.getY(vertex);
-    padPositions.setZ(vertex, terrainHeight(x, z) - centerY);
-  }
-  padGeometry.computeVertexNormals();
-  const pad = new THREE.Mesh(padGeometry, junctionMaterial);
-  pad.rotation.x = -Math.PI / 2;
-  pad.position.set(junction.x, centerY + 0.135, junction.z);
-  pad.receiveShadow = true;
-  scene.add(pad);
-}
 
 const paddyWaterMaterial = new THREE.MeshPhysicalMaterial({
   color: "#78988a",
@@ -1183,10 +1143,7 @@ const farmerSkinMaterial = new THREE.MeshStandardMaterial({
   color: "#956b4b",
   roughness: 1,
 });
-const farmerHairMaterial = new THREE.MeshStandardMaterial({
-  color: "#b5aa8b",
-  roughness: 1,
-});
+
 const farmerClothes = [
   "#89794c",
   "#765a46",
@@ -1241,85 +1198,13 @@ for (let workerIndex = 0; workerIndex < 6; workerIndex++) {
   const upperBody = new THREE.Group();
   upperBody.position.y = 0.57;
   group.add(upperBody);
-  const isWoman = workerIndex === 2 || workerIndex === 5;
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(
-      isWoman ? 0.23 : 0.22,
-      isWoman ? 0.42 : 0.48,
-      3,
-      7,
-    ),
-    isWoman ? farmerClothes[workerIndex] : farmerSkinMaterial,
-  );
-  body.position.set(0, (isWoman ? 0.99 : 1.06) - 0.57, 0.1);
-  body.castShadow = true;
-  upperBody.add(body);
-  const lowerWrap = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.24, 0.34, isWoman ? 0.95 : 0.66, 9),
-    isWoman
-      ? farmerSariMaterials[workerIndex % farmerSariMaterials.length]
-      : farmerMunduMaterial,
-  );
-  lowerWrap.position.y = isWoman ? 0.57 : 0.43;
-  lowerWrap.castShadow = true;
-  group.add(lowerWrap);
-  if (isWoman) {
-    const sariPallu = new THREE.Mesh(
-      new THREE.BoxGeometry(0.28, 1.0, 0.1),
-      farmerSariMaterials[workerIndex % farmerSariMaterials.length],
-    );
-    sariPallu.position.set(-0.2, 1.06 - 0.57, 0.2);
-    sariPallu.rotation.z = -0.25;
-    upperBody.add(sariPallu);
-  }
   const head = new THREE.Group();
-  const face = new THREE.Mesh(
-    new THREE.SphereGeometry(0.21, 9, 7),
-    farmerSkinMaterial,
-  );
-  face.position.set(0, 1.36, -0.04);
-  head.add(face);
-  const grayHair = new THREE.Mesh(
-    new THREE.SphereGeometry(0.215, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.56),
-    farmerHairMaterial,
-  );
-  grayHair.position.set(0, 1.44, -0.04);
-  head.add(grayHair);
-  if (isWoman) {
-    const bun = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 7, 5),
-      farmerHairMaterial,
-    );
-    bun.position.set(0, 1.43, 0.13);
-    head.add(bun);
-  } else {
-    const hat = new THREE.Mesh(
-      new THREE.ConeGeometry(0.48, 0.25, 10),
-      farmerHatMaterial,
-    );
-    hat.scale.y = 0.48;
-    hat.position.set(0, 1.58, -0.04);
-    head.add(hat);
-  }
   head.position.y = -0.57;
   upperBody.add(head);
   const arms: THREE.Group[] = [];
   for (const side of [-1, 1]) {
     const arm = new THREE.Group();
     arm.position.set(side * 0.28, 1.16 - 0.57, -0.02);
-    const sleeve = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.095, 0.38, 3, 6),
-      isWoman ? farmerClothes[workerIndex] : farmerSkinMaterial,
-    );
-    sleeve.position.set(-side * 0.045, -0.23, -0.05);
-    sleeve.rotation.z = side * -0.24;
-    arm.add(sleeve);
-    const hand = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 7, 5),
-      farmerSkinMaterial,
-    );
-    hand.position.set(-side * 0.09, -0.47, -0.12);
-    arm.add(hand);
     upperBody.add(arm);
     arms.push(arm);
   }
@@ -1334,12 +1219,6 @@ for (let workerIndex = 0; workerIndex < 6; workerIndex++) {
   for (const side of [-1, 1]) {
     const leg = new THREE.Group();
     leg.position.set(side * 0.14, 0.53, 0.08);
-    const lowerLeg = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.085, 0.38, 3, 6),
-      farmerSkinMaterial,
-    );
-    lowerLeg.position.y = -0.23;
-    leg.add(lowerLeg);
     group.add(leg);
     legs.push(leg);
   }
@@ -1373,40 +1252,7 @@ const rockMaterial = new THREE.MeshStandardMaterial({
   roughness: 1,
   flatShading: true,
 });
-const rockGeometry = new THREE.DodecahedronGeometry(1, 0);
-const scatteredRocks: THREE.Mesh[] = [];
-for (let i = 0; i < 52; i++) {
-  const x = (random() - 0.5) * 166;
-  const z = (random() - 0.5) * 166;
-  if (
-    Math.hypot(x, z) < 7 ||
-    terrainHeight(x, z) < -2.2 ||
-    distanceToRoad(x, z) < 3.2 ||
-    distanceToRiver(x, z) < 4.5 ||
-    isInsidePaddyReserve(x, z, 1) ||
-    isInsideKalariReserve(x, z, 1.5) ||
-    isNearHarvestPalm(x, z, 2) ||
-    isInsideBackyardReserve(x, z, 1) ||
-    insideGarden(vegetablePlots, x, z, 1) ||
-    insideNewHomesteadPath(x, z) ||
-    isInsideTeaShop(x, z, 1) ||
-    isInsideHeritageYard(x, z) ||
-    insideTempleGround(x, z, 1) ||
-    [...allBuildingSites, ...marketSites].some(
-      ([siteX, siteZ]) => Math.hypot(x - siteX, z - siteZ) < 5,
-    )
-  )
-    continue;
-  const rock = new THREE.Mesh(rockGeometry, rockMaterial);
-  const size = 0.25 + random() * 0.8;
-  rock.position.set(x, terrainHeight(x, z) + size * 0.4, z);
-  rock.scale.set(size * (0.8 + random()), size * 0.7, size);
-  rock.rotation.set(random() * 0.3, random() * Math.PI, random() * 0.3);
-  rock.castShadow = true;
-  rock.receiveShadow = true;
-  scene.add(rock);
-  scatteredRocks.push(rock);
-}
+// Legacy procedural dodecahedron rocks removed — replaced by downloaded Sketchfab cliff rocks & boulders.
 
 const wallMaterials = ["#806044", "#73543d", "#8c6a49", "#694d39"].map(
   (color) => new THREE.MeshStandardMaterial({ color, roughness: 1 }),
@@ -1442,6 +1288,7 @@ const lampGlass = new THREE.MeshStandardMaterial({
   roughness: 0.8,
 });
 const cottages: THREE.Group[] = [];
+const cottageMeta: { building: THREE.Group; isWorkerHut: boolean; index: number }[] = [];
 const yardStructures: THREE.Group[] = [];
 const createCottage = (
   x: number,
@@ -1577,6 +1424,7 @@ const createCottage = (
   building.rotation.y = rotation;
   scene.add(building);
   cottages.push(building);
+  cottageMeta.push({ building, isWorkerHut: index >= 20 && index < 30, index });
 };
 for (const [index, [x, z]] of buildingSites.entries()) {
   createCottage(x, z, index, backyardPlans[index].rotation);
@@ -1590,17 +1438,16 @@ for (const [index, home] of scatteredHomes.entries()) {
     ),
   );
   const path = new THREE.Mesh(
-    createRoadRibbonGeometry(
+    createDetailedRoadGeometry(
       approach,
-      1.1,
-      0,
-      0.1,
+      { ...KERALA_ROAD_SPECS.idavazhi, width: 1.5, lift: 0.055 },
       terrainHeight,
       (x, z) => !getWaterInfo(x, z),
     ),
-    roadMaterial,
+    keralaRoadSystem.approachMaterial,
   );
   path.receiveShadow = true;
+  path.renderOrder = 2;
   scene.add(path);
 }
 
@@ -1698,6 +1545,7 @@ for (const x of [-3.35, 3.35]) {
   shutterFrame.position.set(x, 2.45, 4.31);
   landlordEstate.add(shutterFrame);
 }
+const manorBuildingMeshes = [...landlordEstate.children];
 const estateWall = new THREE.MeshStandardMaterial({
   color: "#977951",
   roughness: 1,
@@ -1830,6 +1678,7 @@ for (const [stallIndex, [x, z, rotation]] of marketSites.entries()) {
   scene.add(stall);
   marketStalls.push(stall);
 }
+const marketStallBuildingMeshes = marketStalls.map((stall) => [...stall.children]);
 
 const wheelWood = new THREE.MeshStandardMaterial({
   color: "#60452e",
@@ -1854,6 +1703,7 @@ type RoadVehicle = {
   farm?: readonly [number, number];
   market?: readonly [number, number];
   produce?: THREE.Group;
+  kalavandi?: KalavandiPhysicsState;
 };
 const vehicles: RoadVehicle[] = [];
 const createHorseCart = (
@@ -2054,12 +1904,20 @@ const createHorseCart = (
   vehicles.push(vehicle);
   return vehicle;
 };
-createHorseCart(roadCurves[0], 0.43, 0.009, "#b4874f", horseCoats[0]);
-createHorseCart(roadCurves[2], 0.47, 0.007, "#8a6343", horseCoats[1]);
+const produceSwapSlots: {
+  host: THREE.Object3D;
+  key: string;
+  height: number;
+  oldMeshes: THREE.Object3D[];
+}[] = [];
+// Dedicated separate Ox-Cart Trade Bypass (roadCurves[14]) for bullock carts (Kalavandi)
+const oxCartCurve = roadCurves[14] ?? roadCurves[0];
+createHorseCart(oxCartCurve, 0.2, 0.0085, "#b4874f", horseCoats[0]);
+createHorseCart(oxCartCurve, 0.65, 0.0075, "#8a6343", horseCoats[1]);
 vehicles.forEach((vehicle, index) => {
   vehicle.delivery = createFarmDelivery();
-  vehicle.farm = index === 0 ? [-42, 30.5] : [-33, 24];
-  vehicle.market = index === 0 ? [0, -25.4] : [17, -25];
+  vehicle.farm = index === 0 ? [-34, 24] : [-22, 16];
+  vehicle.market = index === 0 ? [28, -42] : [52, -38];
   vehicle.walker = {
     x: vehicle.farm[0],
     z: vehicle.farm[1],
@@ -2094,7 +1952,19 @@ vehicles.forEach((vehicle, index) => {
           z + Math.floor(item / 2) * 0.18,
         );
         produce.add(banana);
+        produceSwapSlots.push({
+          host: banana,
+          key: "banana_ripe",
+          height: 0.18,
+          oldMeshes: [...banana.children],
+        });
       } else {
+        const vegHolder = new THREE.Group();
+        vegHolder.position.set(
+          x + ((item % 2) - 0.5) * 0.2,
+          1.76,
+          z + Math.floor(item / 2) * 0.18,
+        );
         const vegetable = new THREE.Mesh(
           new THREE.SphereGeometry(0.1, 10, 8),
           new THREE.MeshStandardMaterial({
@@ -2104,12 +1974,15 @@ vehicles.forEach((vehicle, index) => {
           }),
         );
         vegetable.scale.y = basket === 2 ? 2.2 : 1;
-        vegetable.position.set(
-          x + ((item % 2) - 0.5) * 0.2,
-          1.86,
-          z + Math.floor(item / 2) * 0.18,
-        );
-        produce.add(vegetable);
+        vegetable.position.y = 0.1;
+        vegHolder.add(vegetable);
+        produce.add(vegHolder);
+        produceSwapSlots.push({
+          host: vegHolder,
+          key: basket === 1 ? "brinjal" : basket === 2 ? "bottle_gourd" : "papaya",
+          height: basket === 1 ? 0.16 : basket === 2 ? 0.24 : 0.2,
+          oldMeshes: [vegetable],
+        });
       }
     }
   }
@@ -2137,10 +2010,7 @@ const villagerMaterials = [
       flatShading: true,
     }),
 );
-const villagerSkinMaterial = new THREE.MeshStandardMaterial({
-  color: "#9b6c4e",
-  roughness: 0.9,
-});
+
 const villagerDhotiMaterial = new THREE.MeshStandardMaterial({
   color: "#e2d6b7",
   roughness: 1,
@@ -2154,10 +2024,7 @@ const villagerSariMaterials = ["#a85e48", "#607553", "#9b7954", "#80657a"].map(
       flatShading: true,
     }),
 );
-const villagerHairMaterial = new THREE.MeshStandardMaterial({
-  color: "#49372c",
-  roughness: 1,
-});
+
 type VillageActivity =
   | "home"
   | "market"
@@ -2172,7 +2039,7 @@ const villageDestinations: {
 }[] = [
   { activity: "market", position: [2, -28], pause: 11 },
   { activity: "fields", position: [-42, 28], pause: 8 },
-  { activity: "kalari", position: [9, -5.7], pause: 10 },
+  { activity: "kalari", position: [kalariSite[0] + 5, kalariSite[1] - 2], pause: 10 },
   { activity: "village", position: [31, -30], pause: 8 },
   {
     activity: "temple",
@@ -2223,110 +2090,10 @@ const villageHomes = buildingSites
   .filter(([x, z]) => distanceToRoad(x, z) < 10);
 for (let i = 0; i < villagerNames.length; i++) {
   const group = new THREE.Group();
-  const isWoman = [0, 1, 5, 7, 9, 11].includes(i) || (i >= 12 && i % 2 === 0);
-  const clothing = villagerMaterials[i % villagerMaterials.length];
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.235, 0.55, 5, 14),
-    isWoman
-      ? villagerSariMaterials[i % villagerSariMaterials.length]
-      : clothing,
-  );
-  body.position.y = 0.83;
-  body.scale.y = 0.8;
-  body.castShadow = true;
-  group.add(body);
-  const lowerWrap = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25, 0.34, isWoman ? 0.95 : 0.62, 9),
-    isWoman
-      ? villagerSariMaterials[i % villagerSariMaterials.length]
-      : villagerDhotiMaterial,
-  );
-  lowerWrap.position.y = isWoman ? 0.57 : 0.42;
-  lowerWrap.castShadow = true;
-  group.add(lowerWrap);
-  if (isWoman) {
-    const palluGeometry = new THREE.PlaneGeometry(0.38, 1.08, 6, 14);
-    const palluPositions = palluGeometry.attributes.position;
-    for (let vertex = 0; vertex < palluPositions.count; vertex++) {
-      const x = palluPositions.getX(vertex),
-        y = palluPositions.getY(vertex),
-        drape = (0.5 + 0.5 * Math.sin((y + 0.54) * Math.PI * 2.4)) * 0.025;
-      palluPositions.setZ(vertex, drape + Math.sin(x * 34 + y * 3) * 0.008);
-    }
-    palluGeometry.computeVertexNormals();
-    const pallu = new THREE.Mesh(
-      palluGeometry,
-      villagerSariMaterials[i % villagerSariMaterials.length],
-    );
-    pallu.position.set(-0.2, 1.02, 0.17);
-    pallu.rotation.z = -0.28;
-    group.add(pallu);
-    const hairBun = new THREE.Mesh(
-      new THREE.SphereGeometry(0.14, 7, 5),
-      villagerHairMaterial,
-    );
-    hairBun.position.set(0, 1.38, 0.17);
-    group.add(hairBun);
-  }
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.205, 20, 16),
-    villagerSkinMaterial,
-  );
-  head.position.y = 1.19;
-  head.castShadow = true;
-  group.add(head);
-  for (const eyeX of [-0.075, 0.075]) {
-    const eye = new THREE.Mesh(
-      new THREE.SphereGeometry(0.026, 6, 5),
-      eyeMaterial,
-    );
-    eye.position.set(eyeX, 1.22, -0.19);
-    group.add(eye);
-  }
-  const nose = new THREE.Mesh(
-    new THREE.SphereGeometry(0.035, 6, 5),
-    villagerSkinMaterial,
-  );
-  nose.position.set(0, 1.17, -0.21);
-  group.add(nose);
-  if (!isWoman) {
-    const hat = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.18, 0.26, 0.19, 8),
-      new THREE.MeshStandardMaterial({
-        color: i % 2 ? "#a58a61" : "#59634d",
-        roughness: 1,
-      }),
-    );
-    hat.position.y = 1.38;
-    group.add(hat);
-  }
-  if (!isWoman) {
-    const pack = new THREE.Mesh(
-      new THREE.BoxGeometry(0.31, 0.37, 0.18),
-      woodMaterial,
-    );
-    pack.position.set(0, 0.72, 0.27);
-    group.add(pack);
-  }
   const arms: THREE.Group[] = [];
   for (const side of [-1, 1]) {
     const arm = new THREE.Group();
     arm.position.set(side * 0.27, 1.03, -0.02);
-    const sleeve = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.085, 0.37, 3, 6),
-      isWoman
-        ? villagerSariMaterials[i % villagerSariMaterials.length]
-        : clothing,
-    );
-    sleeve.position.set(-side * 0.035, -0.22, -0.025);
-    sleeve.rotation.z = side * -0.12;
-    arm.add(sleeve);
-    const hand = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 7, 5),
-      villagerSkinMaterial,
-    );
-    hand.position.set(-side * 0.04, -0.43, -0.08);
-    arm.add(hand);
     group.add(arm);
     arms.push(arm);
   }
@@ -2334,20 +2101,6 @@ for (let i = 0; i < villagerNames.length; i++) {
   for (const side of [-1, 1]) {
     const leg = new THREE.Group();
     leg.position.set(side * 0.14, 0.44, 0.04);
-    const shin = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.09, 0.34, 3, 6),
-      isWoman
-        ? villagerSariMaterials[i % villagerSariMaterials.length]
-        : villagerDhotiMaterial,
-    );
-    shin.position.y = -0.17;
-    leg.add(shin);
-    const sandal = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.11, 0.31),
-      woodMaterial,
-    );
-    sandal.position.set(0, -0.39, -0.055);
-    leg.add(sandal);
     group.add(leg);
     legs.push(leg);
   }
@@ -2547,6 +2300,7 @@ const lampBase = new THREE.Mesh(
 );
 lampBase.position.set(4.5, 0.22, -3.1);
 kalari.add(lampBase);
+const kalariBuildingMeshes = [...kalari.children];
 const kalariLamp = new THREE.PointLight("#ffc17d", 0, 9, 2);
 kalariLamp.position.set(4.5, 0.8, -3.1);
 kalari.add(kalariLamp);
@@ -2578,173 +2332,17 @@ const periodEyeMaterial = new THREE.MeshStandardMaterial({
   color: "#302820",
   roughness: 0.75,
 });
-const referenceHairMaterial = new THREE.MeshStandardMaterial({
-  color: "#241d1b",
-  roughness: 0.98,
-});
-const referenceBeardMaterial = new THREE.MeshStandardMaterial({
-  color: "#302522",
-  roughness: 0.98,
-});
+
 const createPeriodFigure = (
-  coatMaterial: THREE.Material,
-  wearsDrape = false,
-  referenceFaceStyle?: number,
+  _coatMaterial: THREE.Material,
+  _wearsDrape = false,
+  _referenceFaceStyle?: number,
 ) => {
   const figure = new THREE.Group();
-  const torso = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.28, 0.58, 4, 8),
-    coatMaterial,
-  );
-  torso.position.y = 0.98;
-  torso.castShadow = true;
-  figure.add(torso);
-  const mundu = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.35, 0.43, 0.8, 8),
-    nobleCloth,
-  );
-  mundu.position.y = 0.48;
-  mundu.castShadow = true;
-  figure.add(mundu);
-  const face = new THREE.Mesh(
-    new THREE.SphereGeometry(
-      referenceFaceStyle === undefined ? 0.23 : 0.235,
-      referenceFaceStyle === undefined ? 9 : 20,
-      referenceFaceStyle === undefined ? 7 : 16,
-    ),
-    farmerSkinMaterial,
-  );
-  if (referenceFaceStyle !== undefined) face.scale.set(1.08, 1, 0.96);
-  face.position.y = 1.57;
-  face.castShadow = true;
-  figure.add(face);
-  for (const eyeX of [-0.085, 0.085]) {
-    const eye = new THREE.Mesh(
-      new THREE.SphereGeometry(0.027, 6, 5),
-      periodEyeMaterial,
-    );
-    eye.position.set(eyeX, 1.61, -0.205);
-    figure.add(eye);
-  }
-  if (referenceFaceStyle !== undefined) {
-    // Shared face cues drawn from the supplied portrait: broad cheeks, dense
-    // curls, heavy brows, and a full beard. Instancing keeps the three figures light.
-    const curlGeometry = new THREE.SphereGeometry(0.074, 8, 6);
-    const curls = new THREE.InstancedMesh(curlGeometry, referenceHairMaterial, 38);
-    const curl = new THREE.Object3D();
-    let curlIndex = 0;
-    for (let ring = 0; ring < 4; ring++) {
-      const count = [9, 11, 10, 8][ring];
-      const ringRadius = [0.12, 0.19, 0.22, 0.14][ring];
-      const y = [1.78, 1.75, 1.66, 1.86][ring];
-      for (let item = 0; item < count; item++) {
-        const angle = (item / count) * Math.PI * 2 + ring * 0.31 + referenceFaceStyle * 0.16;
-        curl.position.set(Math.cos(angle) * ringRadius, y, Math.sin(angle) * ringRadius * 0.82);
-        const size = 0.8 + ((item * 7 + ring * 3 + referenceFaceStyle) % 5) * 0.09;
-        curl.scale.set(size, size * 0.9, size);
-        curl.updateMatrix();
-        curls.setMatrixAt(curlIndex++, curl.matrix);
-      }
-    }
-    curls.count = curlIndex;
-    curls.castShadow = true;
-    figure.add(curls);
-
-    const beard = new THREE.Mesh(
-      new THREE.SphereGeometry(0.18, 14, 10),
-      referenceBeardMaterial,
-    );
-    beard.scale.set(1.08, 0.95, 0.68);
-    beard.position.set(0, 1.445, -0.125);
-    beard.castShadow = true;
-    figure.add(beard);
-    for (const side of [-1, 1]) {
-      const brow = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.023, 0.08, 3, 6),
-        referenceHairMaterial,
-      );
-      brow.position.set(side * 0.082, 1.66, -0.194);
-      brow.rotation.z = side * -0.12;
-      figure.add(brow);
-      const moustache = new THREE.Mesh(
-        new THREE.SphereGeometry(0.075, 10, 7),
-        referenceBeardMaterial,
-      );
-      moustache.scale.set(1, 0.42, 0.55);
-      moustache.position.set(side * 0.06, 1.5, -0.212);
-      figure.add(moustache);
-    }
-  }
-  if (referenceFaceStyle === undefined) {
-    for (const side of [-1, 1]) {
-      const moustache = new THREE.Mesh(
-        new THREE.SphereGeometry(0.075, 7, 5),
-        periodHairMaterial,
-      );
-      moustache.scale.set(1.15, 0.42, 0.55);
-      moustache.position.set(side * 0.07, 1.49, -0.214);
-      moustache.rotation.z = side * -0.12;
-      figure.add(moustache);
-    }
-  }
-  if (referenceFaceStyle === undefined) {
-    const turban = new THREE.Mesh(
-      new THREE.SphereGeometry(0.27, 8, 6),
-      wearsDrape ? guardCloth : nobleCloth,
-    );
-    turban.scale.set(1, 0.52, 1);
-    turban.position.y = 1.77;
-    figure.add(turban);
-  } else {
-    // A light shoulder cloth over a mundu gives the training figures a Kerala
-    // period silhouette without modern shirts, shoes, or headwear.
-    const drapeColors = ["#d8c9a5", "#b7a37d", "#d4c39b"];
-    const shoulderCloth = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.29, 0.98, 5, 12),
-      new THREE.MeshStandardMaterial({
-        color: drapeColors[referenceFaceStyle % drapeColors.length],
-        roughness: 1,
-        side: THREE.DoubleSide,
-      }),
-    );
-    const clothPositions = shoulderCloth.geometry.attributes.position;
-    for (let vertex = 0; vertex < clothPositions.count; vertex++) {
-      const x = clothPositions.getX(vertex);
-      const y = clothPositions.getY(vertex);
-      clothPositions.setZ(vertex, 0.045 * Math.sin((y + 0.5) * Math.PI * 2) + 0.018 * x * x);
-    }
-    shoulderCloth.geometry.computeVertexNormals();
-    shoulderCloth.position.set(-0.19, 1.02, -0.235);
-    shoulderCloth.rotation.z = 0.3 + referenceFaceStyle * 0.08;
-    shoulderCloth.castShadow = true;
-    figure.add(shoulderCloth);
-  }
-  if (wearsDrape) {
-    const sash = new THREE.Mesh(
-      new THREE.BoxGeometry(0.17, 0.92, 0.52),
-      nobleTrim,
-    );
-    sash.position.set(0.14, 1.03, -0.02);
-    sash.rotation.z = -0.38;
-    figure.add(sash);
-  }
   const arms: THREE.Group[] = [];
   for (const side of [-1, 1]) {
     const arm = new THREE.Group();
     arm.position.set(side * 0.29, 1.28, 0);
-    const sleeve = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.09, 0.39, 3, 6),
-      coatMaterial,
-    );
-    sleeve.position.y = -0.24;
-    sleeve.rotation.z = side * -0.12;
-    arm.add(sleeve);
-    const hand = new THREE.Mesh(
-      new THREE.SphereGeometry(0.075, 7, 5),
-      farmerSkinMaterial,
-    );
-    hand.position.set(0, -0.48, -0.02);
-    arm.add(hand);
     figure.add(arm);
     arms.push(arm);
   }
@@ -2752,72 +2350,30 @@ const createPeriodFigure = (
   for (const side of [-1, 1]) {
     const leg = new THREE.Group();
     leg.position.set(side * 0.14, 0.43, 0.02);
-    const lowerLeg = new THREE.Mesh(
-      new THREE.CapsuleGeometry(0.095, 0.32, 3, 6),
-      coatMaterial,
-    );
-    lowerLeg.position.y = -0.16;
-    leg.add(lowerLeg);
-    const foot = new THREE.Mesh(
-      new THREE.BoxGeometry(0.2, 0.11, 0.3),
-      woodMaterial,
-    );
-    foot.position.set(0, -0.38, -0.055);
-    leg.add(foot);
     figure.add(leg);
     legs.push(leg);
   }
   return { figure, arms, legs };
 };
-const kalariFigures = [-2.4, 0, 2.4].map((x, index) => {
+// Students 0 & 1 face each other in a Vaal-Paricha sword & buckler sparring duel; Student 2 practices solo forms behind
+const kalariStudentAnchors: [number, number, number][] = [
+  [-1.05, 0.85, -Math.PI / 2],
+  [1.05, 0.85, Math.PI / 2],
+  [0, 2.0, 0],
+];
+const kalariFigures = kalariStudentAnchors.map(([x, z, rotY], index) => {
   const practitioner = createPeriodFigure(farmerSkinMaterial, false, index);
-  practitioner.figure.position.set(x, 0.1, index === 1 ? -0.5 : 0.35);
-  practitioner.figure.rotation.y = index === 2 ? -0.25 : 0.25;
-  practitioner.figure.scale.setScalar(index === 1 ? 0.95 : 0.9);
-  kalari.add(practitioner.figure);
-  const sword = new THREE.Group();
-  const blade = new THREE.Mesh(
-    new THREE.BoxGeometry(0.08, 0.85, 0.035),
-    new THREE.MeshStandardMaterial({
-      color: "#bcc5be",
-      metalness: 0.65,
-      roughness: 0.35,
-    }),
-  );
-  blade.position.y = 0.45;
-  const tip = new THREE.Mesh(
-    new THREE.ConeGeometry(0.045, 0.16, 4),
-    blade.material,
-  );
-  tip.position.y = 0.95;
-  const hilt = new THREE.Mesh(
-    new THREE.BoxGeometry(0.25, 0.05, 0.08),
-    nobleTrim,
-  );
-  sword.add(blade, tip, hilt);
-  sword.position.set(0, -0.48, -0.08);
-  sword.rotation.x = -Math.PI / 2;
-  practitioner.arms[1].add(sword);
-  const buckler = new THREE.Group();
-  const shield = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.3, 0.3, 0.07, 16),
-    new THREE.MeshStandardMaterial({
-      color: "#594835",
-      metalness: 0.3,
-      roughness: 0.65,
-    }),
-  );
-  shield.rotation.x = Math.PI / 2;
-  const boss = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), nobleTrim);
-  boss.scale.z = 0.55;
-  boss.position.z = -0.07;
-  buckler.add(shield, boss);
-  buckler.position.set(0, -0.4, -0.12);
-  practitioner.arms[0].add(buckler);
-  practitioner.figure.rotation.y =
-    index === 0 ? -Math.PI / 2 : index === 2 ? Math.PI / 2 : 0;
+  practitioner.figure.position.set(x, 0.1, z);
+  practitioner.figure.rotation.y = rotY;
+  practitioner.figure.scale.setScalar(index === 1 ? 0.96 : 0.92);
+  practitioner.figure.visible = false;
   return practitioner;
 });
+// Kalari Gurukkal (Master) standing in front of the 3 students teaching them
+const kalariGuru = createPeriodFigure(nobleCloth, false);
+kalariGuru.figure.position.set(0, 0.1, -1.85);
+kalariGuru.figure.rotation.y = Math.PI;
+kalari.add(kalariGuru.figure);
 const coconutHarvesters = harvestPalms.map((palm, index) => {
   const person = createPeriodFigure(farmerSkinMaterial, false);
   person.figure.scale.setScalar(0.9);
@@ -2906,19 +2462,20 @@ const marketCoconuts = new THREE.InstancedMesh(
 marketCoconuts.count = 0;
 scene.add(marketCoconuts);
 let coconutSales = 0;
+const cartDrivers: ReturnType<typeof createPeriodFigure>[] = [];
 for (const [index, vehicle] of vehicles.entries()) {
   const driver = createPeriodFigure(
     villagerMaterials[index % villagerMaterials.length],
     false,
   );
-  driver.figure.position.set(0, 1.06, -0.55);
-  driver.figure.position.y = 1.35;
+  driver.figure.position.set(0, 0.88, -0.55);
   driver.legs.forEach((leg) => (leg.rotation.x = -1.25));
   driver.arms.forEach((arm) => {
     arm.rotation.x = 0.8;
     arm.rotation.z *= 0.35;
   });
   vehicle.group.add(driver.figure);
+  cartDrivers.push(driver);
 }
 const lordActor = createPeriodFigure(nobleCloth, true);
 lordActor.figure.position.x = -0.65;
@@ -3054,7 +2611,7 @@ for (let ribIndex = 0; ribIndex < 16; ribIndex++) {
   leafTip.rotation.y = -angle;
   parasol.add(leafTip);
 }
-procession.add(parasol);
+parasol.visible = false;
 scene.add(procession);
 
 // Estate household travels independently of the landlord's inspection party.
@@ -3065,42 +2622,18 @@ const seatFigure = (person: ReturnType<typeof createPeriodFigure>) => {
   person.legs.forEach((leg) => (leg.rotation.x = -1.25));
   person.arms.forEach((arm) => (arm.rotation.x = 0.5));
 };
+const landlordRelatives: { person: ReturnType<typeof createPeriodFigure>; isWoman: boolean }[] = [];
 for (const [index, x] of [-0.35, 0.35].entries()) {
   const relative = createPeriodFigure(
     index ? villagerSariMaterials[0] : nobleCloth,
     true,
   );
-  if (index) {
-    for (const child of [...relative.figure.children]) {
-      if (
-        child instanceof THREE.Mesh &&
-        child.geometry instanceof THREE.SphereGeometry &&
-        [0.075, 0.27].includes(child.geometry.parameters.radius)
-      )
-        relative.figure.remove(child);
-      if (
-        child instanceof THREE.Mesh &&
-        child.geometry instanceof THREE.CylinderGeometry &&
-        child.geometry.parameters.height === 0.8
-      )
-        child.material = villagerSariMaterials[0];
-    }
-    const bun = new THREE.Mesh(
-      new THREE.SphereGeometry(0.15, 7, 5),
-      periodHairMaterial,
-    );
-    bun.position.set(0, 1.73, 0.16);
-    const pallu = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 1, 0.1),
-      villagerSariMaterials[0],
-    );
-    pallu.position.set(-0.22, 1.05, 0.16);
-    relative.figure.add(bun, pallu);
-  }
+
   relative.figure.position.set(x, 1.34, 0.7);
   relative.figure.scale.setScalar(0.82);
   seatFigure(relative);
   landlordCart.group.add(relative.figure);
+  landlordRelatives.push({ person: relative, isWoman: Boolean(index) });
 }
 const familyStops: InspectionStop[] = [
   inspectionStops[0],
@@ -3192,8 +2725,28 @@ type AmbientAnimal = {
   surfaceY?: number;
   nightPatrol?: NightPatrol;
   startledUntil?: number;
+  lastX?: number;
+  lastZ?: number;
+  stuckSince?: number;
+  elkMixer?: THREE.AnimationMixer;
+  elkWalk?: THREE.AnimationAction;
+  elkRun?: THREE.AnimationAction;
+  elkIdle?: THREE.AnimationAction;
+  elkActive?: THREE.AnimationAction;
 };
 const ambientAnimals: AmbientAnimal[] = [];
+// How close the player can get before each prey animal bolts. Predators
+// (tiger, wolf) live in the night-patrol branch and never flee from the player.
+const AMBIENT_FLEE_RADIUS: Partial<Record<AmbientAnimal["species"], number>> = {
+  rabbit: 7,
+  deer: 8,
+  hen: 5,
+  duck: 6,
+  boar: 6,
+  monkey: 6,
+  cow: 4,
+  elephant: 3,
+};
 const isForestHabitat = createForestHabitat(distanceToRiver);
 const cowCoat = new THREE.MeshStandardMaterial({
   color: "#e5ddc6",
@@ -4435,13 +3988,21 @@ const vegetableGrowers = vegetablePlots.map((plot, index) => {
         foliage.rotation.set(0.15, angle, 0.1);
         crop.add(foliage);
       }
+      const cropFruit = new THREE.Group();
+      cropFruit.position.set(0.12, height * 0.6, -0.06);
       const vegetable = new THREE.Mesh(
         new THREE.SphereGeometry(plot.crop === "brinjal" ? 0.1 : 0.07, 10, 8),
         plot.crop === "brinjal" ? brinjalSkin : gardenLeaf,
       );
       vegetable.scale.set(1, plot.crop === "gourd" ? 4 : 2, 1);
-      vegetable.position.set(0.12, height * 0.6, -0.06);
-      crop.add(vegetable);
+      cropFruit.add(vegetable);
+      crop.add(cropFruit);
+      produceSwapSlots.push({
+        host: cropFruit,
+        key: plot.crop === "brinjal" ? "brinjal" : plot.crop === "okra" ? "okra" : "bottle_gourd",
+        height: plot.crop === "brinjal" ? 0.18 : plot.crop === "okra" ? 0.14 : 0.34,
+        oldMeshes: [vegetable],
+      });
       garden.add(crop);
     }
     if (plot.crop === "gourd") {
@@ -4505,7 +4066,10 @@ const oxHandlers = oxTeams.map((ox, index) =>
   ),
 );
 const marketSellers = marketStalls.map((stall, index) => {
-  const seller = createPeriodFigure(villagerMaterials[index], false);
+  const seller = createPeriodFigure(
+    villagerMaterials[index % villagerMaterials.length],
+    false,
+  );
   seller.figure.position.set(0, 0, 1.15);
   stall.add(seller.figure);
   const work = new THREE.Vector3(0, 0, 1.15)
@@ -4531,6 +4095,15 @@ const kalariWorkers = kalariFigures.map((person, index) => {
     kalari,
   );
 });
+const kalariGuruAt = kalariGuru.figure.getWorldPosition(new THREE.Vector3());
+const kalariGuruWorker = registerWorker(
+  kalariGuru.figure,
+  kalariGuru.arms,
+  kalariGuru.legs,
+  [kalariGuruAt.x, kalariGuruAt.z],
+  villageHomes[0],
+  kalari,
+);
 const heritageActivities: [number, number, string, string][] = [
   [
     -43,
@@ -4742,6 +4315,7 @@ for (const side of [-1, 1])
     );
     festivalDecorations.add(pole);
   }
+const elephantRiders: ReturnType<typeof createPeriodFigure>[] = [];
 const festivalElephants = Array.from({ length: 3 }, (_value, index) => {
   const source = ambientAnimals.find(
     (animal) => animal.species === "elephant",
@@ -4762,6 +4336,7 @@ const festivalElephants = Array.from({ length: 3 }, (_value, index) => {
   rider.legs.forEach((leg) => (leg.rotation.x = -1.2));
   rider.arms[1].rotation.x = 1.1;
   group.add(rider.figure);
+  elephantRiders.push(rider);
   festivalDecorations.add(group);
   return group;
 });
@@ -4920,7 +4495,15 @@ for (let crate = 0; crate < 3; crate++) {
   const bananas = makeBanana();
   bananas.position.set(0, 0.42, crate * 0.75);
   marketFarmCrates.add(bananas);
+  produceSwapSlots.push({
+    host: bananas,
+    key: "banana_ripe",
+    height: 0.18,
+    oldMeshes: [...bananas.children],
+  });
   for (let item = 0; item < 3; item++) {
+    const crateVeg = new THREE.Group();
+    crateVeg.position.set(-0.2 + item * 0.2, 0.36, crate * 0.75 + 0.12);
     const vegetable = new THREE.Mesh(
       new THREE.SphereGeometry(0.1, 10, 8),
       new THREE.MeshStandardMaterial({
@@ -4928,13 +4511,21 @@ for (let crate = 0; crate < 3; crate++) {
         roughness: 0.75,
       }),
     );
-    vegetable.position.set(-0.2 + item * 0.2, 0.41, crate * 0.75 + 0.12);
+    vegetable.position.y = 0.05;
     vegetable.scale.y = crate === 2 ? 1.8 : 1;
-    marketFarmCrates.add(vegetable);
+    crateVeg.add(vegetable);
+    marketFarmCrates.add(crateVeg);
+    produceSwapSlots.push({
+      host: crateVeg,
+      key: crate === 1 ? "brinjal" : crate === 2 ? "bottle_gourd" : "tapioca",
+      height: crate === 1 ? 0.16 : crate === 2 ? 0.24 : 0.2,
+      oldMeshes: [vegetable],
+    });
   }
 }
 marketFarmCrates.visible = false;
 const teaShop = makeTeaShop();
+const teaShopBuildingMeshes = [...teaShop.children];
 teaShop.position.set(
   teaShopSite[0],
   terrainHeight(...teaShopSite),
@@ -4972,6 +4563,7 @@ shopGoods.push([], []);
 const shopLocations = [marketStalls[0], marketStalls[1], teaShop, teaShop];
 const foodSellers = [marketSellers[0], marketSellers[1], teaSeller, teaSeller];
 const toddyShop = makeTeaShop("toddy");
+const toddyShopBuildingMeshes = [...toddyShop.children];
 toddyShop.position.set(
   toddyShopSite[0],
   terrainHeight(...toddyShopSite),
@@ -5033,6 +4625,7 @@ for (const [index, kind] of (["bow", "sword", "shield"] as const).entries()) {
   prop.scale.setScalar(0.6);
   equipmentCounter.add(prop);
 }
+const equipmentCounterBuildingMeshes = [...equipmentCounter.children];
 const equipmentPerson = createPeriodFigure(farmerClothes[1]);
 equipmentPerson.figure.position.set(4, 0, -1.2);
 kalari.add(equipmentPerson.figure);
@@ -5045,6 +4638,8 @@ const equipmentSeller = registerWorker(
   villageHomes[2],
   kalari,
 );
+const proceduralShopSigns: THREE.Mesh[] = [];
+let teaShopReplaced = false;
 const makeShopSign = (text: string, stall: THREE.Group) => {
   const canvas = document.createElement("canvas");
   canvas.width = 512;
@@ -5069,6 +4664,7 @@ const makeShopSign = (text: string, stall: THREE.Group) => {
   sign.position.set(0, 2.05, -0.98);
   sign.rotation.y = Math.PI;
   stall.add(sign);
+  proceduralShopSigns.push(sign);
   const english: Record<string, string> = {
     "കളരി · ആയുധങ്ങൾ": "Kalari equipment — bow, sword and buckler",
     "പഴം · 1 അണ": "Banana — 1 anna",
@@ -5087,14 +4683,15 @@ marketStalls.forEach((stall, index) => {
     )
       stall.remove(child);
   }
-  makeShopSign(
-    index === 0
-      ? "പഴം · 1 അണ"
-      : index === 1
-        ? "കരിക്കിൻ വെള്ളം · 2 അണ"
-        : "പുതിയ മീൻ",
-    stall,
-  );
+  const stallSignLabels = [
+    "പഴം · 1 അണ",
+    "കരിക്കിൻ വെള്ളം · 2 അണ",
+    "പുതിയ മീൻ",
+    "പച്ചക്കറി കട",
+    "പലചരക്ക് · ഓലക്കട",
+    "മൺപാത്രം · കൈത്തറി",
+  ];
+  makeShopSign(stallSignLabels[index] ?? "ചന്ത", stall);
   if (index > 1) return;
   for (let item = 0; item < 9; item++) {
     const goods = index === 0 ? makeBanana() : makeDrinkingCoconut();
@@ -5106,6 +4703,12 @@ marketStalls.forEach((stall, index) => {
     if (index === 0) goods.rotation.y = item * 0.5;
     stall.add(goods);
     shopGoods[index].push(goods);
+    produceSwapSlots.push({
+      host: goods,
+      key: index === 0 ? "banana_ripe" : "coconut_open",
+      height: index === 0 ? 0.18 : 0.22,
+      oldMeshes: [...goods.children],
+    });
   }
 });
 let fishSales = 0;
@@ -5235,131 +4838,7 @@ riverBridge.position.set(
 riverBridge.rotation.y = Math.atan2(-bridgeSpan.roadZ, bridgeSpan.roadX);
 scene.add(riverBridge);
 
-const grassVertices: number[] = [];
-for (let blade = 0; blade < 5; blade++) {
-  const angle = (blade / 5) * Math.PI * 2;
-  const directionX = Math.cos(angle);
-  const directionZ = Math.sin(angle);
-  const sideX = -directionZ * 0.028;
-  const sideZ = directionX * 0.028;
-  const baseX = directionX * 0.018;
-  const baseZ = directionZ * 0.018;
-  const tipX = directionX * (0.055 + (blade % 2) * 0.018);
-  const tipZ = directionZ * (0.055 + (blade % 2) * 0.018);
-  const height = 0.24 + (blade % 3) * 0.045;
-  grassVertices.push(
-    baseX - sideX,
-    0,
-    baseZ - sideZ,
-    tipX,
-    height,
-    tipZ,
-    baseX + sideX,
-    0,
-    baseZ + sideZ,
-  );
-}
-const grassBladeGeometry = new THREE.BufferGeometry();
-grassBladeGeometry.setAttribute(
-  "position",
-  new THREE.Float32BufferAttribute(grassVertices, 3),
-);
-grassBladeGeometry.computeVertexNormals();
-grassBladeGeometry.computeBoundingSphere();
-const grassMaterials = ["#718d4b", "#86984e", "#9c9b57"].map(
-  (color) =>
-    new THREE.MeshStandardMaterial({
-      color,
-      roughness: 1,
-      side: THREE.DoubleSide,
-    }),
-);
-grassMaterials.forEach((material) => addVegetationWind(material, 0.14));
-for (const [siteIndex, [siteX, siteZ]] of animalSites.entries()) {
-  if (siteIndex >= 7 && siteIndex !== 9) continue;
-  for (let colorIndex = 0; colorIndex < grassMaterials.length; colorIndex++) {
-    const grass = new THREE.InstancedMesh(
-      grassBladeGeometry,
-      grassMaterials[colorIndex],
-      48,
-    );
-    const transform = new THREE.Object3D();
-    for (let blade = 0; blade < 48; blade++) {
-      const x = siteX + (random() - 0.5) * 11;
-      const z = siteZ + (random() - 0.5) * 11;
-      const scale = 0.42 + random() * 0.75;
-      transform.position.set(x, terrainHeight(x, z) + 0.015, z);
-      transform.rotation.set(
-        (random() - 0.5) * 0.24,
-        random() * Math.PI,
-        (random() - 0.5) * 0.24,
-      );
-      transform.scale.set(scale, scale, scale);
-      transform.updateMatrix();
-      grass.setMatrixAt(blade, transform.matrix);
-    }
-    grass.instanceMatrix.needsUpdate = true;
-    grass.receiveShadow = true;
-    scene.add(grass);
-  }
-}
-
-const meadowMeshes = grassMaterials.map(
-  (material) => new THREE.InstancedMesh(grassBladeGeometry, material, 11000),
-);
-const meadowTransform = new THREE.Object3D();
-let meadowBladeCount = 0;
-for (let attempt = 0; attempt < 102000 && meadowBladeCount < 32000; attempt++) {
-  const x = (random() - 0.5) * 178;
-  const z = (random() - 0.5) * 178;
-  if (
-    terrainHeight(x, z) < -1.8 ||
-    distanceToRoad(x, z) < 3.3 ||
-    distanceToRiver(x, z) < 5.2 ||
-    isInsidePaddyReserve(x, z) ||
-    isInsideKalariReserve(x, z) ||
-    insideGarden(vegetablePlots, x, z, 0.6) ||
-    insideNewHomesteadPath(x, z) ||
-    isInsideTeaShop(x, z, 0.8) ||
-    isInsideHeritageYard(x, z) ||
-    insideTempleGround(x, z, 0.8)
-  )
-    continue;
-  if (
-    allBuildingSites.some(
-      ([siteX, siteZ]) => Math.hypot(x - siteX, z - siteZ) < 4.8,
-    )
-  )
-    continue;
-  if (
-    marketSites.some(([siteX, siteZ]) => Math.hypot(x - siteX, z - siteZ) < 3.2)
-  )
-    continue;
-  if (Math.hypot(x - pondX, z - pondZ) < 6.4) continue;
-  const scale = 0.28 + random() * 0.55;
-  meadowTransform.position.set(x, terrainHeight(x, z) + 0.015, z);
-  meadowTransform.rotation.set(
-    (random() - 0.5) * 0.35,
-    random() * Math.PI,
-    (random() - 0.5) * 0.35,
-  );
-  meadowTransform.scale.set(scale, scale, scale);
-  meadowTransform.updateMatrix();
-  const mesh = meadowMeshes[meadowBladeCount % meadowMeshes.length];
-  mesh.setMatrixAt(
-    Math.floor(meadowBladeCount / meadowMeshes.length),
-    meadowTransform.matrix,
-  );
-  meadowBladeCount++;
-}
-meadowMeshes.forEach((mesh, index) => {
-  mesh.count = Math.ceil(
-    Math.max(0, meadowBladeCount - index) / meadowMeshes.length,
-  );
-  mesh.instanceMatrix.needsUpdate = true;
-  mesh.computeBoundingSphere();
-  scene.add(mesh);
-});
+// All procedural grass geometry removed — only downloaded Sketchfab grass & foliage are used.
 
 const player = new THREE.Group();
 const bodyMaterial = new THREE.MeshStandardMaterial({
@@ -5852,6 +5331,138 @@ horseModelLoader.load(
   (error) => console.error("Could not load horse_rajan.glb", error),
 );
 scene.add(playerHorse);
+// Realistic Animated Elk (Sketchfab, CC-BY). Replaces the procedural deer
+// body with a rigged, animated elk that walks, runs, and idles in place.
+const elkModelLoader = new GLTFLoader();
+let elkTemplate: THREE.Group | undefined;
+// three 0.187 dropped KHR_materials_pbrSpecularGlossiness, so the elk's fur
+// diffuse map would never apply and the deer would render blank. This loader
+// extension restores the diffuse (fur) map and maps glossiness->roughness.
+class ElkSpecularGlossinessExtension {
+  parser: unknown;
+  name: string;
+  constructor(parser: unknown) {
+    this.parser = parser;
+    this.name = "KHR_materials_pbrSpecularGlossiness";
+  }
+  getMaterialType(materialIndex: number) {
+    const ext = this.extensionDef(materialIndex);
+    return ext ? THREE.MeshStandardMaterial : null;
+  }
+  extendMaterialParams(materialIndex: number, materialParams: Record<string, unknown>) {
+    const ext = this.extensionDef(materialIndex);
+    if (!ext) return Promise.resolve();
+    const parser = this.parser as {
+      assignTexture: (params: Record<string, unknown>, key: string, tex: unknown, colorSpace: unknown) => Promise<unknown>;
+    };
+    const pending: Promise<unknown>[] = [];
+    if (Array.isArray(ext.diffuseFactor)) {
+      const [r, g, b] = ext.diffuseFactor;
+      materialParams.color = new THREE.Color(r, g, b);
+    }
+    if (ext.diffuseTexture) {
+      pending.push(
+        parser.assignTexture(materialParams, "map", ext.diffuseTexture, THREE.SRGBColorSpace),
+      );
+    }
+    materialParams.roughness =
+      ext.glossinessFactor !== undefined ? 1 - ext.glossinessFactor : 1;
+    materialParams.metalness = 0;
+    return Promise.all(pending);
+  }
+  extensionDef(materialIndex: number): any {
+    const json = (this.parser as { json: { materials: { extensions?: Record<string, any> }[] } }).json;
+    const material = json.materials[materialIndex];
+    return material?.extensions?.[this.name];
+  }
+}
+elkModelLoader.register(
+  (parser: unknown) => new ElkSpecularGlossinessExtension(parser),
+);
+elkModelLoader.load(
+  `${import.meta.env.BASE_URL}models/elk_animated.glb`,
+  (gltf) => {
+    elkTemplate = fitImportedModel(gltf.scene, 1.7, Math.PI);
+    const clips = gltf.animations;
+    // Find walk/run/idle clips even when names are prefixed ("Armature|Walk",
+    // "mixamo.com", "Take 001") or use different wording.
+    const norm = (name: string) =>
+      name.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    const pickClip = (exact: string[], include: string[]) => {
+      for (const e of exact) {
+        const found = clips.find((clip) => norm(clip.name) === e);
+        if (found) return found;
+      }
+      for (const i of include) {
+        const found = clips.find((clip) => {
+          const n = norm(clip.name);
+          return n.includes(i) && !n.includes("trans");
+        });
+        if (found) return found;
+      }
+      return clips[0];
+    };
+    const walkClip = pickClip(["walk"], ["walk", "move", "step"]);
+    const runClip = pickClip(["run", "trot"], ["run", "trot", "sprint", "gallop"]);
+    const idleClip = pickClip(["idle"], ["idle", "breath", "stand", "rest"]);
+    for (const animal of ambientAnimals) {
+      if (animal.species !== "deer" || !elkTemplate) continue;
+      const model = cloneSkeleton(elkTemplate);
+      const mixer = new THREE.AnimationMixer(model);
+      const actionFor = (clip: THREE.AnimationClip | undefined) =>
+        clip ? mixer.clipAction(clip) : undefined;
+      const walk = actionFor(walkClip);
+      const run = actionFor(runClip);
+      const idle = actionFor(idleClip);
+      [walk, run, idle].forEach((action) => {
+        if (action) action.setLoop(THREE.LoopRepeat, Infinity);
+      });
+      animal.group.clear();
+      animal.group.scale.setScalar(1);
+      animal.group.add(model);
+      animal.legs = [];
+      animal.elkMixer = mixer;
+      animal.elkWalk = walk;
+      animal.elkRun = run;
+      animal.elkIdle = idle;
+      idle?.play();
+    }
+    console.info(`Loaded animated elk with ${clips.length} clips; upgraded deer.`);
+  },
+  undefined,
+  (error) => console.error("Could not load elk_animated.glb", error),
+);
+// rabbit_rigged.glb has one clip, "Take 001": a looping hop (leg swing plus
+// a vertical root bob). The dairy cow and Halva chicken in the asset folder
+// have no walk clip, so cattle and hens stay on their procedural gaits.
+const rabbitModelLoader = new GLTFLoader();
+rabbitModelLoader.load(
+  `${import.meta.env.BASE_URL}models/rabbit_rigged.glb`,
+  (gltf) => {
+    // The rig faces +X. A quarter turn points the nose along the game's -Z forward.
+    const rabbitTemplate = fitImportedModel(gltf.scene, 0.42, Math.PI / 2);
+    const hopClip = gltf.animations[0];
+    for (const animal of ambientAnimals) {
+      if (animal.species !== "rabbit" || !hopClip) continue;
+      const model = cloneSkeleton(rabbitTemplate);
+      const mixer = new THREE.AnimationMixer(model);
+      const hop = mixer.clipAction(hopClip);
+      hop.setLoop(THREE.LoopRepeat, Infinity);
+      animal.group.clear();
+      animal.group.scale.setScalar(1);
+      animal.group.add(model);
+      animal.legs = [];
+      animal.elkMixer = mixer;
+      animal.elkWalk = hop;
+      animal.elkRun = hop;
+    }
+    console.info(
+      `Loaded rigged rabbit with clip "${hopClip?.name ?? "none"}"; upgraded rabbits.`,
+    );
+  },
+  undefined,
+  (error) => console.error("Could not load rabbit_rigged.glb", error),
+);
 const saddle = new THREE.Mesh(
   new THREE.BoxGeometry(0.65, 0.16, 0.7),
   new THREE.MeshStandardMaterial({ color: "#563d2b", roughness: 1 }),
@@ -6072,12 +5683,17 @@ const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const timeLabel = document.querySelector<HTMLSpanElement>("#time-of-day")!;
 const weatherLabel =
   document.querySelector<HTMLSpanElement>("#weather-status")!;
-const daySky = new THREE.Color("#b8c9cf");
-const nightSky = new THREE.Color("#1b2b40");
-const sunsetSky = new THREE.Color("#d39879");
-const stormSky = new THREE.Color("#667c7a");
-const dayHorizon = new THREE.Color("#dde6ea");
-const nightHorizon = new THREE.Color("#8191aa");
+// RDR2-inspired 18th-century warm painterly sky, golden-hour amber, and Prussian-indigo night palette
+const daySky = new THREE.Color("#d8cbb2");
+const nightSky = new THREE.Color("#0e1828");
+const sunsetSky = new THREE.Color("#d97c42");
+const stormSky = new THREE.Color("#4f5b54");
+const dayHorizon = new THREE.Color("#f0dfc0");
+const nightHorizon = new THREE.Color("#4e6282");
+const middaySunColor = new THREE.Color("#ffe5b8");
+const goldenSunColor = new THREE.Color("#ff9844");
+const warmGroundBounce = new THREE.Color("#4f412b");
+hemisphere.groundColor.copy(warmGroundBounce);
 let lastEnvironmentLabel = "";
 const updateEnvironment = (elapsed: number, delta: number) => {
   const day = sampleDayNight(elapsed);
@@ -6087,12 +5703,13 @@ const updateEnvironment = (elapsed: number, delta: number) => {
     .copy(nightSky)
     .lerp(daySky, day.daylight)
     .lerp(sunsetSky, day.twilight * (1 - weather.cloud * 0.35))
-    .lerp(stormSky, weather.cloud * day.daylight * 0.3);
+    .lerp(stormSky, weather.cloud * day.daylight * 0.35);
   atmosphere.color.copy(skyColor);
-  atmosphere.density = 0.0058 + weather.cloud * 0.0014 + weather.rain * 0.002;
+  atmosphere.density = 0.0062 + weather.cloud * 0.0018 + weather.rain * 0.0024;
   hemisphere.color.copy(nightHorizon).lerp(dayHorizon, day.daylight);
-  hemisphere.intensity = 0.55 + day.daylight * (1.15 - weather.cloud * 0.35);
-  scene.environmentIntensity = 0.04 + day.daylight * 0.3;
+  hemisphere.intensity = 0.75 + day.daylight * (1.35 - weather.cloud * 0.28);
+  scene.environmentIntensity = 0.12 + day.daylight * 0.36;
+  sun.color.copy(middaySunColor).lerp(goldenSunColor, Math.min(1, day.twilight * 1.15));
   const sunAngle = ((day.hour - 6) * Math.PI) / 12;
   const sunX = Math.cos(sunAngle);
   const sunY = Math.max(0.02, day.sunHeight);
@@ -6102,7 +5719,7 @@ const updateEnvironment = (elapsed: number, delta: number) => {
     playerState.y + sunY * 75,
     playerState.z - 35,
   );
-  sun.intensity = Math.max(0, day.sunHeight) * 3.2 * (1 - weather.cloud * 0.55);
+  sun.intensity = Math.max(0, day.sunHeight) * 3.45 * (1 - weather.cloud * 0.5);
   sun.castShadow = day.sunHeight > 0.08;
   sunDisc.position.set(
     playerState.x + sunX * 120,
@@ -6118,7 +5735,7 @@ const updateEnvironment = (elapsed: number, delta: number) => {
     playerState.y + Math.max(0.1, moonHeight) * 70,
     playerState.z + 40,
   );
-  moonlight.intensity = night * 0.75 * (1 - weather.cloud * 0.35);
+  moonlight.intensity = night * 0.85 * (1 - weather.cloud * 0.3);
   moonDisc.position.set(
     playerState.x + Math.cos(moonAngle) * 110,
     playerState.y + Math.max(0, moonHeight) * 105,
@@ -6129,11 +5746,11 @@ const updateEnvironment = (elapsed: number, delta: number) => {
   starsMaterial.opacity = night * (1 - weather.cloud * 0.8) * 0.85;
   stars.visible = starsMaterial.opacity > 0.02;
   clouds.position.set(playerState.x, 0, playerState.z);
-  cloudMaterial.color.set(night > 0.5 ? "#7d8995" : "#f3eee1");
-  cloudMaterial.opacity = (0.18 + weather.cloud * 0.5) * (1 - night * 0.35);
+  cloudMaterial.color.set(night > 0.5 ? "#667488" : day.twilight > 0.25 ? "#f2c394" : "#f5ead6");
+  cloudMaterial.opacity = (0.2 + weather.cloud * 0.5) * (1 - night * 0.35);
   lampGlass.emissiveIntensity = night * 1.8;
   for (const lamp of villageLamps) lamp.intensity = night * 2.2;
-  renderer.toneMappingExposure = 1.02 + day.daylight * 0.1;
+  renderer.toneMappingExposure = 1.08 + day.daylight * 0.14;
   rain.visible = weather.rain > 0.03 && !reducedMotion.matches;
   if (rain.visible) {
     rain.position.set(playerState.x, playerState.y + 1, playerState.z);
@@ -6215,6 +5832,10 @@ let playerGestureUntil = 0;
 let lastShopDay = 0;
 const heldBanana = makeBanana();
 const heldCoconut = makeDrinkingCoconut();
+produceSwapSlots.push(
+  { host: heldBanana, key: "banana_ripe", height: 0.18, oldMeshes: [...heldBanana.children] },
+  { host: heldCoconut, key: "coconut_open", height: 0.22, oldMeshes: [...heldCoconut.children] },
+);
 const heldTea = makeTeaGlass(),
   heldSnack = makeSnack();
 const heldToddy = makeTeaGlass();
@@ -6453,7 +6074,8 @@ const respondToEquipment = (kind: EquipmentKind) => {
               allBuildingSites.some(
                 ([hx, hz]) => Math.hypot(x - hx, z - hz) < 4,
               ) ||
-              isInsidePaddyReserve(x, z)
+              isInsidePaddyReserve(x, z) ||
+              isKalariAnimalKeepOut(x, z)
         ) {
           safe = false;
           break;
@@ -7033,9 +6655,6 @@ const textureMaterials = (
 textureMaterials([ground.material], groundDetail, 0.055);
 textureMaterials(
   [
-    roadMaterial,
-    shoulderMaterial,
-    junctionMaterial,
     paddySoilMaterial,
     paddyBundMaterial,
     kalariEarth,
@@ -7155,7 +6774,7 @@ const skyDome = new THREE.Mesh(
 );
 skyDome.renderOrder = -10;
 scene.add(skyDome);
-const blueZenith = new THREE.Color("#729ab6");
+const blueZenith = new THREE.Color("#4c6e88");
 const applySurface = (
   materials: THREE.Material[],
   kind: "soil" | "bark" | "plaster" | "cloth" | "thatch",
@@ -7174,15 +6793,15 @@ const applySurface = (
     material.needsUpdate = true;
   });
 };
-applySurface([ground.material], "soil", 85, 0.07);
+const meadowGroundTex = createKeralaMeadowGroundTextures(46);
+ground.material.map = meadowGroundTex.map;
+ground.material.normalMap = meadowGroundTex.normalMap;
+ground.material.normalScale = new THREE.Vector2(1.15, 1.15);
+ground.material.bumpMap = null;
+ground.material.roughness = 0.96;
+ground.material.needsUpdate = true;
 applySurface(
-  [
-    roadMaterial,
-    shoulderMaterial,
-    junctionMaterial,
-    paddySoilMaterial,
-    paddyBundMaterial,
-  ],
+  [paddySoilMaterial, paddyBundMaterial],
   "soil",
   1,
   0.045,
@@ -7218,28 +6837,19 @@ applySurface(
   3,
   0.065,
 );
-const groundMaterial = ground.material as THREE.MeshStandardMaterial;
-groundMaterial.onBeforeCompile = (shader) => {
-  shader.vertexShader = shader.vertexShader
-    .replace(
-      "#include <common>",
-      "#include <common>\nvarying vec2 earthPosition;",
-    )
-    .replace(
-      "#include <begin_vertex>",
-      "#include <begin_vertex>\nearthPosition=position.xy;",
-    );
-  shader.fragmentShader = shader.fragmentShader
-    .replace(
-      "#include <common>",
-      "#include <common>\nvarying vec2 earthPosition;",
-    )
-    .replace(
-      "#include <color_fragment>",
-      "#include <color_fragment>\nfloat patches=sin(earthPosition.x*0.53+sin(earthPosition.y*0.3))*cos(earthPosition.y*0.61)+sin(earthPosition.x*2.7+earthPosition.y*3.1)*0.22; diffuseColor.rgb*=0.94+patches*0.09;",
-    );
-};
-const leafAtlas = makeLeafAtlas();
+// 1. Real Poly Haven 5-Biome Kerala Soil, Red Laterite, Clay, Alluvial Mud & Forest Floor Shader
+upgradeKeralaTerrainMaterial(
+  ground.material as THREE.MeshStandardMaterial,
+  meadowGroundTex.map,
+  meadowGroundTex.normalMap,
+);
+applyKeralaSurfaceTextures({
+  paddySoilMaterial,
+  paddyBundMaterial,
+  riverBankMaterial,
+  kalariEarth,
+});
+
 const closeToShopVegetation = (x: number, z: number) =>
   [...marketSites, teaShopSite, toddyShopSite].some(
     ([sx, sz]) => Math.hypot(x - sx, z - sz) < 6.5,
@@ -7268,175 +6878,895 @@ for (let index = coconutPalms.length - 1; index >= 0; index--) {
     coconutPalms.splice(index, 1);
   }
 }
-trees.forEach((tree, index) => {
-  const crowns = tree.children.filter(
-    (child) => child instanceof THREE.Mesh && child.geometry === canopyGeometry,
-  ) as THREE.Mesh[];
-  if (!crowns.length) return;
-  const top = Math.max(
-    ...crowns.map((crown) => crown.position.y + crown.scale.y),
-  );
-  const width = Math.max(...crowns.map((crown) => crown.scale.x));
-  crowns.forEach((crown) => tree.remove(crown));
-  tree.add(
-    makeDetailedTree(
-      1973 + index * 37,
-      top,
-      Math.max(1, width),
-      leafAtlas,
-      trunkMaterial,
-    ),
-  );
+
+const isNaturePlacementBlocked = (x: number, z: number) =>
+  isInsidePaddyReserve(x, z, 0.6) ||
+  isInsideKalariReserve(x, z, 0.8) ||
+  insideGarden(vegetablePlots, x, z, 0.7) ||
+  insideNewHomesteadPath(x, z) ||
+  isInsideTeaShop(x, z, 1.0) ||
+  isInsideHeritageYard(x, z) ||
+  insideTempleGround(x, z, 1.0) ||
+  allBuildingSites.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < 4.9) ||
+  marketSites.some(([sx, sz]) => Math.hypot(x - sx, z - sz) < 3.4);
+
+// 2. Real Sketchfab Photogrammetry Trees, Palms, Bushes, Grass, Ferns, Pond Lotus & Rocks + GPU Wind Sway
+const sketchfabNature = buildSketchfabNatureSystem({
+  scene,
+  treeHosts: trees,
+  palmHosts: coconutPalms,
+  excludePalmGroups: new Set(harvestPalms.map((p) => p.group)),
+  terrainHeight,
+  distanceToRoad,
+  distanceToRiver,
+  pondCenter: [pondX, pondZ],
+  pondSurfaceY: pondY,
+  isBlocked: isNaturePlacementBlocked,
+  roadCurves,
+  roadWidths: roadCurves.map((_, idx) => KERALA_ROAD_SPECS[getKeralaRoadTypeForRoute(idx)].width),
 });
-const importedTreeFiles = [
-  "banana_tree1.glb",
-  "banana_tree2.glb",
-  "coconut_tree1.glb",
-  "coconut_tree2.glb",
-];
-const importedBushFiles = ["bush_1.glb", "bush_2.glb", "bush_3.glb"];
-const chestnutLeafTexture = new THREE.TextureLoader().load(
-  `${import.meta.env.BASE_URL}models/chestnut_leaves.jpg`,
-);
-chestnutLeafTexture.colorSpace = THREE.SRGBColorSpace;
-const chestnutBarkTexture = new THREE.TextureLoader().load(
-  `${import.meta.env.BASE_URL}models/chestnut_bark.jpg`,
-);
-chestnutBarkTexture.colorSpace = THREE.SRGBColorSpace;
-const chestnutTreeTemplate = new Promise<THREE.Group>((resolve, reject) => {
-  new OBJLoader().load(
-    `${import.meta.env.BASE_URL}models/chestnut_tree.obj`,
-    (object) => {
-      object.traverse((part) => {
-        if (!(part instanceof THREE.Mesh)) return;
-        if (!part.geometry.attributes.normal) part.geometry.computeVertexNormals();
-        const sourceMaterials = Array.isArray(part.material) ? part.material : [part.material];
-        const materials = sourceMaterials.map((source) => {
-          const leaves = source.name.toLowerCase() === "green";
-          return new THREE.MeshStandardMaterial({
-            map: leaves ? chestnutLeafTexture : chestnutBarkTexture,
-            color: leaves ? "#c6d49a" : "#b4a28d",
-            roughness: leaves ? 0.92 : 0.98,
-            side: leaves ? THREE.DoubleSide : THREE.FrontSide,
-          });
+
+// Keep authentic homestead vegetable crops & paddy rice clumps
+const keralaFloraCropSpecs = [
+  { file: "flora/cultivation_tapioca.glb", height: 1.55 },
+  { file: "flora/cultivation_taro_yam.glb", height: 0.95 },
+  { file: "flora/cultivation_spices_veg.glb", height: 0.85 },
+] as const;
+Promise.allSettled([
+  Promise.allSettled(keralaFloraCropSpecs.map((s) => loadAssetTemplate(s.file))),
+  loadAssetTemplate("flora/paddy_clump_green.glb"),
+  loadAssetTemplate("flora/paddy_clump_golden.glb"),
+]).then(([cropRes, paddyGreenRes, paddyGoldRes]) => {
+  const loadedCrops =
+    cropRes.status === "fulfilled"
+      ? cropRes.value
+          .map((r, i) =>
+            r.status === "fulfilled"
+              ? { model: r.value, height: keralaFloraCropSpecs[i].height }
+              : null,
+          )
+          .filter((x): x is NonNullable<typeof x> => x !== null)
+      : [];
+  if (loadedCrops.length > 0) {
+    buildingSites.forEach(([hx, hz], idx) => {
+      const angle = idx * 1.85 + 0.6;
+      const cx = hx + Math.cos(angle) * 4.4;
+      const cz = hz + Math.sin(angle) * 4.4;
+      if (distanceToRoad(cx, cz) < 2.6 || distanceToRiver(cx, cz) < 5.0) return;
+      const pick = loadedCrops[idx % loadedCrops.length];
+      const plot = new THREE.Group();
+      plot.position.set(cx, terrainHeight(cx, cz) - 0.02, cz);
+      plot.rotation.y = angle;
+      plot.add(fitImportedModel(pick.model.clone(true), pick.height));
+      scene.add(plot);
+    });
+  }
+  const paddyGreen = paddyGreenRes.status === "fulfilled" ? paddyGreenRes.value : undefined;
+  const paddyGold = paddyGoldRes.status === "fulfilled" ? paddyGoldRes.value : undefined;
+  if (paddyGreen || paddyGold) {
+    paddyPlots.forEach(([fieldX, fieldZ], plotIndex) => {
+      const waterY = paddyWaterLevels[plotIndex] ?? paddyTerrain(fieldX, fieldZ) - 0.03;
+      const tpl = plotIndex === 1 && paddyGold ? paddyGold : (paddyGreen ?? paddyGold)!;
+      for (let r = 0; r < 4; r++) {
+        for (let c = 0; c < 6; c++) {
+          const px = fieldX - 4.1 + c * 1.64 + (r % 2) * 0.55;
+          const pz = fieldZ - 2.9 + r * 1.92;
+          const clump = new THREE.Group();
+          clump.position.set(px, waterY + 0.08, pz);
+          clump.rotation.y = (r * 7 + c * 13) * 0.6;
+          clump.add(fitImportedModel(tpl.clone(true), 0.78 + ((r + c) % 3) * 0.1));
+          scene.add(clump);
+        }
+      }
+    });
+  }
+});
+const keralaAnimalSystem = createKeralaAnimalSystem({
+  scene,
+  loadAssetTemplate,
+  fitImportedModel,
+  terrainHeight,
+  getWaterInfo,
+  distanceToRoad,
+  distanceToRiver,
+  riverPoints: riverRoutePoints,
+  pondCenter: [pondX, pondZ],
+  paddyPlots,
+  buildingSites,
+  templeSite,
+  isForbiddenZone: isKalariAnimalKeepOut,
+  onTemplatesLoaded: ({
+    cow,
+    doubleOx,
+    buffalo,
+    hen,
+    duck,
+    elephant,
+    karimeen,
+    rohu,
+    spawnAnimatedClone,
+  }) => {
+    // 1. Replace legacy procedural ambient animals (cows are now handled exclusively by cowAI.ts!)
+    ambientAnimals.forEach((animal) => {
+      if (animal.species === "cow") {
+        animal.group.clear();
+        animal.group.visible = false;
+        animal.legs.length = 0;
+      } else if (animal.species === "hen" && hen) {
+        animal.group.clear();
+        animal.group.scale.setScalar(1);
+        animal.group.add(spawnAnimatedClone(hen, 0.44, Math.PI));
+        animal.legs.length = 0;
+      } else if (animal.species === "duck" && duck) {
+        animal.group.clear();
+        animal.group.scale.setScalar(1);
+        animal.group.add(spawnAnimatedClone(duck, 0.42, Math.PI));
+        animal.legs.length = 0;
+      } else if (animal.species === "elephant" && elephant) {
+        animal.group.clear();
+        animal.group.scale.setScalar(1);
+        animal.group.add(spawnAnimatedClone(elephant, 2.75, Math.PI));
+        animal.legs.length = 0;
+      }
+    });
+
+    // 2. Replace legacy paddy plowing oxen with double_ox_walk.glb while KEEPING the plow & farmer guiding behind!
+    if (doubleOx) {
+      oxTeams.forEach((team) => {
+        for (const child of [...team.team.children]) {
+          if (child !== team.farmer.figure) team.team.remove(child);
+        }
+        const pair = spawnAnimatedClone(doubleOx, 1.52, Math.PI, [
+          "ox_ walk_draft",
+          "walk",
+          "draft",
+        ]);
+        pair.position.set(0, 0.04, -0.35);
+        team.team.add(pair);
+        const shaft = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 1.85), woodMaterial);
+        shaft.position.set(0, 0.56, 1.05);
+        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.075, 0.98, 0.075), woodMaterial);
+        handle.position.set(0, 0.54, 1.88);
+        const blade = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.16, 0.28), animalHooves);
+        blade.position.set(0, 0.08, 1.94);
+        team.team.add(shaft, handle, blade);
+        team.farmer.figure.position.set(0.0, 0, 2.38);
+        team.farmer.figure.rotation.y = Math.PI;
+        team.oxen.forEach((ox) => {
+          ox.legs.length = 0;
         });
-        part.material = Array.isArray(part.material) ? materials : materials[0];
-        part.castShadow = true;
-        part.receiveShadow = true;
       });
-      resolve(object);
-    },
-    undefined,
-    reject,
-  );
+    } else if (buffalo || cow) {
+      const oxTpl = (buffalo ?? cow)!;
+      oxTeams.forEach((team) => {
+        team.oxen.forEach((ox) => {
+          ox.group.clear();
+          ox.group.scale.setScalar(1);
+          ox.group.add(spawnAnimatedClone(oxTpl, 1.38, Math.PI));
+          ox.legs.length = 0;
+        });
+      });
+    }
+
+    // 3. Drive all wooden bullock carts (Kalavandi) with real rigged Oxen (double_ox_walk.glb) on their dedicated ox-cart path!
+    // Place oxen cleanly IN FRONT of the cart bed (z = -2.15), grounded at y = 0 and driven exclusively by kalavandiPhysics.ts
+    const cartOx = doubleOx ?? buffalo ?? cow;
+    if (cartOx) {
+      const allOxCarts = [...vehicles];
+      if (!allOxCarts.includes(landlordCart)) allOxCarts.push(landlordCart);
+      allOxCarts.forEach((v) => {
+        v.horse.clear();
+        const oxModel = spawnAnimatedClone(
+          cartOx,
+          1.48,
+          Math.PI,
+          ["ox_ walk_draft", "walk", "draft"],
+          true,
+        );
+        oxModel.position.set(0, 0, -2.15);
+        v.horse.add(oxModel);
+        v.horseLegs.length = 0;
+        attachKalavandiOxAnimation(
+          v,
+          oxModel,
+          oxModel.userData.animMixer as THREE.AnimationMixer | undefined,
+          oxModel.userData.animAction as THREE.AnimationAction | undefined,
+        );
+      });
+    }
+
+    // 3b. Automatically upgrade wooden carts & manchal to detailed Blender Kerala Bullock Carts (with Palla) & Pallakku when exported
+    Promise.allSettled([
+      loadAssetTemplate("vehicles/kerala_bullock_cart_palla.glb"),
+      loadAssetTemplate("vehicles/kerala_bullock_cart_cargo.glb"),
+      loadAssetTemplate("vehicles/kerala_pallakku.glb"),
+    ]).then(([pallaRes, cargoRes, pallakkuRes]) => {
+      const pallaTpl = pallaRes.status === "fulfilled" ? pallaRes.value : undefined;
+      const cargoTpl = cargoRes.status === "fulfilled" ? cargoRes.value : undefined;
+      const pallakkuTpl = pallakkuRes.status === "fulfilled" ? pallakkuRes.value : undefined;
+
+      if (pallaTpl || cargoTpl) {
+        const allCarts = [...vehicles];
+        if (!allCarts.includes(landlordCart)) allCarts.push(landlordCart);
+        allCarts.forEach((v, idx) => {
+          const usePalla = v === landlordCart || idx % 2 === 0;
+          const tpl = usePalla ? (pallaTpl ?? cargoTpl)! : (cargoTpl ?? pallaTpl)!;
+          const targetH = usePalla ? 2.48 : 1.64;
+
+          // Remove legacy procedural box/torus cart parts while preserving v.horse (oxen) and seated NPCs
+          const wheelSet = new Set<THREE.Object3D>(v.wheels);
+          for (const child of [...v.group.children]) {
+            if (child === v.horse) continue;
+            if (child instanceof THREE.Mesh || wheelSet.has(child) || child === v.produce) {
+              v.group.remove(child);
+            }
+          }
+          v.wheels.length = 0;
+
+          const cartModel = fitImportedModel(tpl.clone(true), targetH, Math.PI);
+          // Align yoke bar cleanly at z ~ -2.05 right over the oxen's shoulders and cart bed behind them
+          cartModel.position.z += 0.28;
+          v.group.add(cartModel);
+
+          // Wire the Blender 12-spoke wheels (Wheel_L_Wood / Wheel_R_Wood) so they spin smoothly as the cart moves!
+          cartModel.traverse((obj) => {
+            const low = obj.name.toLowerCase();
+            if (low.startsWith("wheel_l_wood") || low.startsWith("wheel_r_wood")) {
+              obj.userData.spinAxis = "x";
+              v.wheels.push(obj as THREE.Group);
+            }
+          });
+          calibrateKalavandiWheels(v);
+        });
+      }
+
+      if (pallakkuTpl) {
+        for (const child of [...manchal.children]) {
+          if (child instanceof THREE.Mesh) manchal.remove(child);
+        }
+        const palModel = fitImportedModel(pallakkuTpl.clone(true), 1.72, Math.PI);
+        palModel.position.y += 0.85;
+        manchal.add(palModel);
+      }
+    });
+
+    // 4. Replace legacy procedural temple festival elephants with sculpted tuskers
+    if (elephant) {
+      festivalElephants.forEach((el) => {
+        for (const child of [...el.children]) {
+          if (child instanceof THREE.Mesh) el.remove(child);
+        }
+        el.add(spawnAnimatedClone(elephant, 2.85, Math.PI));
+      });
+    }
+
+    // 5. Replace all 18 legacy procedural sphere+cone river fish with real Karimeen & Rohu
+    if (karimeen || rohu) {
+      riverFish.forEach((fish, idx) => {
+        const tpl = idx % 2 === 0 ? (karimeen ?? rohu)! : (rohu ?? karimeen)!;
+        fish.group.clear();
+        fish.group.add(spawnAnimatedClone(tpl, 0.25, Math.PI));
+      });
+    }
+  },
 });
-Promise.all([
-  Promise.all(importedTreeFiles.map(loadAssetTemplate)),
-  Promise.all(importedBushFiles.map(loadAssetTemplate)),
-  loadAssetTemplate("group_rocks1.glb"),
-  chestnutTreeTemplate,
-])
-  .then(([treeModels, bushModels, rockTemplate, chestnutTree]) => {
-    trees.forEach((tree, index) => {
-      if (index % 2 !== 0) return;
-      const useChestnut = index % 6 === 0;
-      const model = useChestnut
-        ? fitImportedModel(chestnutTree.clone(true), 5.7)
-        : fitImportedModel(treeModels[index % treeModels.length].clone(true), 6.1);
-      tree.clear();
-      tree.add(model);
-      vegetationWindSways.push({
-        group: tree,
-        phase: index * 2.17,
-        amplitude: 0.018 + (index % 5) * 0.002,
-        baseX: tree.rotation.x,
-        baseZ: tree.rotation.z,
-      });
-    });
+// Replaced legacy house GLBs with 18th-century Kerala class-based houses, Grand Mana, Veettu Parisaram & Veli fences
+void manorBuildingMeshes;
+buildKeralaHousesAndCompounds({
+  scene,
+  baseUrl: import.meta.env.BASE_URL,
+  landlordEstate,
+  landlordEstateSite,
+  estateRotation,
+  cottageMeta,
+  terrainHeight,
+  distanceToRoad,
+  isWater: (x, z) => Boolean(getWaterInfo(x, z)),
+  addSolid: (s) => {
+    worldSolids.push(s);
+  },
+  roadRoutes,
+  fitImportedModel,
+});
+const shopSpecs = {
+  tea: { file: "chaya_kada.glb", height: 3.27 },
+  toddy: { file: "toddy_shop.glb", height: 3.31 },
+  banana: { file: "market_stall_banana.glb", height: 2.54 },
+  coconut: { file: "market_stall_coconut.glb", height: 2.54 },
+  fish: { file: "market_stall_fish.glb", height: 2.54 },
+  vegetables: { file: "market_stall_vegetables.glb", height: 2.54 },
+  provisions: { file: "market_stall_provisions.glb", height: 2.54 },
+  pottery: { file: "market_stall_pottery.glb", height: 2.54 },
+  kalariCounter: { file: "kalari_equipment_counter.glb", height: 1.03 },
+} as const;
+Promise.allSettled([
+  loadAssetTemplate(shopSpecs.tea.file),
+  loadAssetTemplate(shopSpecs.toddy.file),
+  loadAssetTemplate(shopSpecs.banana.file),
+  loadAssetTemplate(shopSpecs.coconut.file),
+  loadAssetTemplate(shopSpecs.fish.file),
+  loadAssetTemplate(shopSpecs.vegetables.file),
+  loadAssetTemplate(shopSpecs.provisions.file),
+  loadAssetTemplate(shopSpecs.pottery.file),
+  loadAssetTemplate(shopSpecs.kalariCounter.file),
+]).then(([teaR, toddyR, bananaR, coconutR, fishR, vegR, provR, potR, counterR]) => {
+  const get = (r: PromiseSettledResult<THREE.Group>) => (r.status === "fulfilled" ? r.value : undefined);
+  const teaModel = get(teaR);
+  const toddyModel = get(toddyR);
+  const bananaModel = get(bananaR);
+  const coconutModel = get(coconutR);
+  const fishModel = get(fishR);
+  const vegModel = get(vegR) ?? bananaModel;
+  const provModel = get(provR) ?? coconutModel;
+  const potModel = get(potR) ?? fishModel;
+  const kalariCounterModel = get(counterR);
 
-    const bushOffsets = [
-      [-1.65, 1.2],
-      [1.7, 1.05],
-      [-1.2, -1.65],
-    ];
-    trees.forEach((tree, index) => {
-      if (index % 4 !== 2) return;
-      const [offsetX, offsetZ] = bushOffsets[index % bushOffsets.length];
-      const x = tree.position.x + offsetX;
-      const z = tree.position.z + offsetZ;
-      if (distanceToRoad(x, z) < 2.8 || distanceToRiver(x, z) < 5.5) return;
-      const bush = new THREE.Group();
-      bush.position.set(x, terrainHeight(x, z), z);
-      bush.rotation.y = (index * 1.71) % (Math.PI * 2);
-      bush.add(index % 8 === 2
-        ? fitImportedModel(chestnutTree.clone(true), 2.1)
-        : fitImportedModel(
-            bushModels[index % bushModels.length].clone(true),
-            1.15 + (index % 3) * 0.12,
-          ));
-      scene.add(bush);
-      vegetationWindSways.push({
-        group: bush,
-        phase: index * 1.31,
-        amplitude: 0.028,
-        baseX: bush.rotation.x,
-        baseZ: bush.rotation.z,
-      });
-    });
-
-    for (const rock of scatteredRocks) {
-      const model = rockTemplate.clone(true);
-      const bounds = new THREE.Box3().setFromObject(model);
-      const size = bounds.getSize(new THREE.Vector3());
-      const modelScale = (rock.scale.x * 2.2) / Math.max(size.x, 0.001);
-      model.scale.setScalar(modelScale);
-      model.position.set(
-        -((bounds.min.x + bounds.max.x) * 0.5) * modelScale,
-        -bounds.min.y * modelScale,
-        -((bounds.min.z + bounds.max.z) * 0.5) * modelScale,
-      );
-      const cluster = new THREE.Group();
-      cluster.position.set(
-        rock.position.x,
-        terrainHeight(rock.position.x, rock.position.z),
-        rock.position.z,
-      );
-      cluster.rotation.copy(rock.rotation);
-      cluster.add(model);
-      scene.remove(rock);
-      scene.add(cluster);
+  if (teaModel) {
+    teaShopBuildingMeshes.forEach((part) => teaShop.remove(part));
+    teaShop.add(fitImportedModel(teaModel.clone(true), shopSpecs.tea.height, 0));
+    teaShopReplaced = true;
+    teaFire.visible = false;
+  }
+  if (toddyModel) {
+    toddyShopBuildingMeshes.forEach((part) => toddyShop.remove(part));
+    toddyShop.add(fitImportedModel(toddyModel.clone(true), shopSpecs.toddy.height, 0));
+  }
+  const stallModels = [
+    { model: bananaModel, height: shopSpecs.banana.height },
+    { model: coconutModel, height: shopSpecs.coconut.height },
+    { model: fishModel, height: shopSpecs.fish.height },
+    { model: vegModel, height: shopSpecs.vegetables.height },
+    { model: provModel, height: shopSpecs.provisions.height },
+    { model: potModel, height: shopSpecs.pottery.height },
+  ];
+  marketStalls.forEach((stall, index) => {
+    const variant = stallModels[index % stallModels.length];
+    if (!variant?.model) return;
+    marketStallBuildingMeshes[index]?.forEach((part) => stall.remove(part));
+    stall.add(fitImportedModel(variant.model.clone(true), variant.height, 0));
+  });
+  // Old procedural/GLB weapon counter inside the Kalari pit is removed so only the authentic Kalari arena & live student weapons appear
+  equipmentCounterBuildingMeshes.forEach((part) => equipmentCounter.remove(part));
+  equipmentCounter.visible = false;
+  void kalariCounterModel;
+  proceduralShopSigns.forEach((sign) => {
+    sign.visible = false;
+  });
+});
+const produceKeys = [...new Set(produceSwapSlots.map((slot) => slot.key))];
+Promise.all(
+  produceKeys.map((key) =>
+    loadAssetTemplate(`produce/${key}.glb`).then((model) => [key, model] as const),
+  ),
+)
+  .then((entries) => {
+    const templates = new Map(entries);
+    for (const slot of produceSwapSlots) {
+      const template = templates.get(slot.key);
+      if (!template) continue;
+      slot.oldMeshes.forEach((part) => slot.host.remove(part));
+      slot.host.add(fitImportedModel(template.clone(true), slot.height, 0));
     }
   })
-  .catch((error) => console.warn("Could not load imported environment assets", error));
-// Replace the remaining decorative sapling balls without changing their reserved positions.
-scene.children.forEach((object, index) => {
-  if (!(object instanceof THREE.Group) || trees.includes(object)) return;
-  const sapling = object.children.find(
-    (child) =>
-      child instanceof THREE.Mesh &&
-      child.geometry === canopyGeometry &&
-      child.material === saplingMaterial,
-  ) as THREE.Mesh | undefined;
-  if (!sapling) return;
-  if (
-    closeToShopVegetation(object.position.x, object.position.z) ||
-    insideTempleGround(object.position.x, object.position.z, 3)
-  ) {
-    scene.remove(object);
-    return;
-  }
-  object.remove(sapling);
-  const top = sapling.position.y + sapling.scale.y;
-  object.add(
-    makeDetailedTree(
-      6000 + index,
-      top,
-      Math.max(0.3, sapling.scale.x),
-      leafAtlas,
-      trunkMaterial,
-    ),
-  );
+  .catch((error) => console.warn("Could not load Blender produce assets", error));
+loadAssetTemplate("kalari_arena.glb")
+  .then((arenaModel) => {
+    // Strip ALL legacy Kalari pit geometry, old signboards, weapon benches, and legacy figures
+    kalariBuildingMeshes.forEach((part) => kalari.remove(part));
+    kalari.remove(kalariSign);
+    kalariSign.visible = false;
+    kalari.remove(equipmentCounter);
+    equipmentCounter.visible = false;
+    kalari.remove(equipmentPerson.figure);
+    equipmentPerson.figure.visible = false;
+    kalariFigures.forEach((p) => kalari.remove(p.figure));
+    kalari.remove(kalariGuru.figure);
+    // Reposition warm oil-lamp PointLight onto the new Southwest Poothara Nilavilakku
+    kalariLamp.position.set(-4.3, 1.25, 2.0);
+    kalari.add(fitImportedModel(arenaModel.clone(true), 6.43, 0));
+  })
+  .catch(() => {});
+loadAssetTemplate("kerala_temple.glb")
+  .then((templeModel) => {
+    // Replace legacy procedural box-and-cone temple with authentic 18th-century 1K PBR Kerala Desa Kshetram
+    for (const child of [...temple.children]) {
+      if (child instanceof THREE.Mesh) {
+        temple.remove(child);
+      }
+    }
+    const templeMesh = fitImportedModel(templeModel.clone(true), 8.2, 0);
+    temple.add(templeMesh);
+    // Add warm glowing sanctuary oil-lamp PointLight inside the front Sreekovil porch
+    const templeLamp = new THREE.PointLight("#ffbe6b", 2.2, 16, 2);
+    templeLamp.position.set(0, 2.2, 1.2);
+    temple.add(templeLamp);
+    villageLamps.push(templeLamp);
+  })
+  .catch(() => {});
+// Clean slate: legacy procedural/Blender NPCs & old physics disabled while we build realistic MPFB2 + Mixamo NPC sets one by one.
+const ENABLE_LEGACY_NPCS = false;
+const legacyNpcGroups: THREE.Object3D[] = [
+  ...villagers.map((v) => v.group),
+  ...children.map((c) => c.person.figure),
+  ...workerActors.map((a) => a.group),
+  ...paddyWorkers.map((w) => w.group),
+  ...coconutHarvesters.map((h) => h.person.figure),
+  ...cartDrivers.map((d) => d.figure),
+  ...escortActors.map((e) => e.figure),
+  ...bearers.map((b) => b.figure),
+  ...landlordRelatives.map((r) => r.person.figure),
+  ...elephantRiders.map((r) => r.figure),
+  ...chendaPlayers.map((p) => p.figure),
+  ...kalariFigures.map((p) => p.figure),
+  ...bankFisherPeople.map((p) => p.figure),
+  ...fishingBoats.map((b) => b.group),
+  kalariGuru.figure,
+  lordActor.figure,
+  landlordRider.figure,
+  guardActor.figure,
+  ridingGuard.figure,
+  elderRelative.figure,
+  procession,
+  manchal,
+  ...neighbourBubbles,
+];
+if (!ENABLE_LEGACY_NPCS) {
+  legacyNpcGroups.forEach((g) => (g.visible = false));
+  carriedLights.forEach((l) => {
+    if (l.owner !== player) l.prop.group.visible = false;
+  });
+  rainUmbrellas.forEach((u) => {
+    if (u.owner !== player) u.umbrella.visible = false;
+  });
+}
+// Set #1: Realistic MPFB2 + Mixamo Kerala Farmers (modular per-set NPC pipeline)
+const mixamoNpcSystem = createMixamoNpcSystem({
+  scene,
+  baseUrl: import.meta.env.BASE_URL,
+  terrainHeight,
+  bridgeHeightAt: (x, z) => bridgeHeightAt(bridgeSpan, x, z),
+  getWaterInfo,
+  getSolids: () => worldSolids,
+  chumaduthangis: keralaRoadSystem.chumaduthangis,
+  getDynamicObstacles: () => {
+    const obs: {
+      x: number;
+      z: number;
+      radius: number;
+      vx: number;
+      vz: number;
+      kind: "kalavandi" | "horse" | "player" | "animal";
+    }[] = [];
+    const pushCart = (v: RoadVehicle) => {
+      if (!v.group.visible) return;
+      const spd = v.kalavandi?.currentSpeed ?? 0;
+      const rotY = v.group.rotation.y;
+      const fwdX = -Math.sin(rotY);
+      const fwdZ = -Math.cos(rotY);
+      const vx = fwdX * spd;
+      const vz = fwdZ * spd;
+      // Cart bed sphere
+      obs.push({
+        x: v.group.position.x,
+        z: v.group.position.z,
+        radius: 1.85,
+        vx,
+        vz,
+        kind: "kalavandi",
+      });
+      // Oxen pair sphere in front of the cart so NPCs never walk through the oxen
+      obs.push({
+        x: v.group.position.x + fwdX * 2.15,
+        z: v.group.position.z + fwdZ * 2.15,
+        radius: 1.35,
+        vx,
+        vz,
+        kind: "kalavandi",
+      });
+    };
+    for (const v of vehicles) pushCart(v);
+    if (!vehicles.includes(landlordCart)) pushCart(landlordCart);
+    if (playerHorse.visible) {
+      const hRotY = playerHorse.rotation.y;
+      const hSpd = horseMode === "ridden" ? 4.5 : horseMode === "coming" ? 3.2 : 0;
+      obs.push({
+        x: playerHorse.position.x,
+        z: playerHorse.position.z,
+        radius: 1.25,
+        vx: -Math.sin(hRotY) * hSpd,
+        vz: -Math.cos(hRotY) * hSpd,
+        kind: "horse",
+      });
+    }
+    for (const animal of ambientAnimals) {
+      if (animal.group.visible) {
+        obs.push({
+          x: animal.group.position.x,
+          z: animal.group.position.z,
+          radius: animal.species === "elephant" ? 2.1 : 0.85,
+          vx: 0,
+          vz: 0,
+          kind: "animal",
+        });
+      }
+    }
+    for (const cow of keralaAnimalSystem.cows) {
+      obs.push({
+        x: cow.x,
+        z: cow.z,
+        radius: 1.05,
+        vx: cow.vx,
+        vz: cow.vz,
+        kind: "animal",
+      });
+    }
+    return obs;
+  },
 });
+const npcKeys = [
+  "npc_landlord",
+  "npc_landlord_woman",
+  "npc_elder_man",
+  "npc_elder_woman",
+  "npc_guard",
+  "npc_farmer_man",
+  "npc_farmer_woman",
+  "npc_fisherman",
+  "npc_villager_man",
+  "npc_villager_woman",
+  "npc_kalari_student",
+  "npc_kalari_guru",
+  "npc_boy",
+  "npc_girl",
+] as const;
+const npcMixers: {
+  host: THREE.Object3D;
+  mixer: THREE.AnimationMixer;
+  walk?: THREE.AnimationAction;
+  run?: THREE.AnimationAction;
+  idle?: THREE.AnimationAction;
+  gesture?: THREE.AnimationAction;
+  active?: THREE.AnimationAction;
+  animSpeed: number;
+  activityActor?: NpcActivityActor;
+  isMoving: () => boolean;
+  isGesturing?: () => boolean;
+}[] = [];
+const npcMannerismActors: CharacterMannerismActor[] = [];
+const npcActivityActors: NpcActivityActor[] = [];
+const npcFallbacks: Record<string, readonly string[]> = {
+  npc_landlord: ["npc_elder_man", "npc_villager_man"],
+  npc_landlord_woman: ["npc_villager_woman", "npc_elder_woman"],
+  npc_elder_man: ["npc_villager_man", "npc_farmer_man"],
+  npc_elder_woman: ["npc_villager_woman", "npc_farmer_woman"],
+  npc_guard: ["npc_kalari_student", "npc_villager_man"],
+  npc_farmer_man: ["npc_villager_man", "npc_fisherman"],
+  npc_farmer_woman: ["npc_villager_woman", "npc_elder_woman"],
+  npc_fisherman: ["npc_farmer_man", "npc_villager_man"],
+  npc_villager_man: ["npc_farmer_man", "npc_elder_man"],
+  npc_villager_woman: ["npc_farmer_woman", "npc_elder_woman"],
+  npc_kalari_student: ["npc_guard", "npc_villager_man"],
+  npc_kalari_guru: ["npc_elder_man", "npc_kalari_student", "npc_villager_man"],
+  npc_boy: ["npc_villager_man", "npc_girl"],
+  npc_girl: ["npc_villager_woman", "npc_boy"],
+};
+if (ENABLE_LEGACY_NPCS) Promise.allSettled(
+  npcKeys.map(
+    (key) =>
+      new Promise<readonly [string, { scene: THREE.Group; animations: THREE.AnimationClip[] }]>(
+        (resolve, reject) => {
+          assetLoader.load(
+            `${import.meta.env.BASE_URL}models/npcs/${key}.glb`,
+            (gltf) => resolve([key, { scene: gltf.scene, animations: gltf.animations }] as const),
+            undefined,
+            reject,
+          );
+        },
+      ),
+  ),
+)
+  .then((results) => {
+    const templates = new Map(
+      results
+        .filter(
+          (
+            r,
+          ): r is PromiseFulfilledResult<
+            readonly [string, { scene: THREE.Group; animations: THREE.AnimationClip[] }]
+          > => r.status === "fulfilled",
+        )
+        .map((r) => r.value),
+    );
+    if (!ENABLE_LEGACY_NPCS || templates.size === 0) return;
+    const resolveTemplate = (key: string) => {
+      const direct = templates.get(key);
+      if (direct) return direct;
+      for (const fallback of npcFallbacks[key] ?? []) {
+        const match = templates.get(fallback);
+        if (match) return match;
+      }
+      return templates.values().next().value;
+    };
+    const hideProceduralFigure = (
+      host: THREE.Object3D,
+      arms: THREE.Group[] = [],
+      legs: THREE.Group[] = [],
+      extraGroups: THREE.Object3D[] = [],
+    ) => {
+      for (const child of host.children) {
+        if (child instanceof THREE.Mesh || child instanceof THREE.InstancedMesh) {
+          child.visible = false;
+        }
+      }
+      for (const extra of extraGroups) {
+        for (const child of extra.children) {
+          if (child instanceof THREE.Mesh || child instanceof THREE.InstancedMesh) {
+            child.visible = false;
+          }
+        }
+      }
+      for (const arm of arms) {
+        for (let idx = 0; idx < 2; idx++) {
+          const part = arm.children[idx];
+          if (part instanceof THREE.Mesh) part.visible = false;
+        }
+      }
+      for (const leg of legs) {
+        for (let idx = 0; idx < 2; idx++) {
+          const part = leg.children[idx];
+          if (part instanceof THREE.Mesh) part.visible = false;
+        }
+      }
+    };
+    const attachNpcRig = (
+      host: THREE.Object3D,
+      key: string,
+      targetHeight: number,
+      arms: THREE.Group[],
+      legs: THREE.Group[],
+      isMoving: () => boolean,
+      isGesturing?: () => boolean,
+      extraGroups: THREE.Object3D[] = [],
+    ) => {
+      const tpl = resolveTemplate(key);
+      if (!tpl) return;
+      hideProceduralFigure(host, arms, legs, extraGroups);
+      const model = fitImportedModel(cloneSkeleton(tpl.scene) as THREE.Group, targetHeight, Math.PI);
+      host.add(model);
+      const mixer = new THREE.AnimationMixer(model);
+      const findClip = (candidates: string[]) => {
+        for (const cand of candidates) {
+          const exact = tpl.animations.find((c) => c.name.toLowerCase() === cand);
+          if (exact) return exact;
+        }
+        for (const cand of candidates) {
+          const partial = tpl.animations.find((c) => c.name.toLowerCase().includes(cand));
+          if (partial) return partial;
+        }
+        return undefined;
+      };
+      const walkClip = findClip(["walk", "walk_female", "walk_formal"]);
+      const runClip = findClip(["run", "jog", "sprint"]);
+      const idleClip = findClip(["idle_a", "idle_subtle", "idle", "rest_pose"]);
+      const gestClip = findClip(["greeting", "idle_talking", "gesture", "talk", "bow"]);
+      const walk = walkClip ? mixer.clipAction(walkClip) : undefined;
+      const run = runClip ? mixer.clipAction(runClip) : undefined;
+      const idle = idleClip ? mixer.clipAction(idleClip) : undefined;
+      const gesture = gestClip ? mixer.clipAction(gestClip) : undefined;
+      [walk, run, idle, gesture].forEach((a) => a?.setLoop(THREE.LoopRepeat, Infinity));
+      idle?.play();
+      const archetype = archetypeFromNpcKey(key);
+      const charProf = CHARACTER_PHYSICS_PROFILES[archetype];
+      const enableActivities =
+        archetype === "villager" ||
+        archetype === "farmer" ||
+        archetype === "elder" ||
+        archetype === "child";
+      const activityActor = enableActivities
+        ? createNpcActivityActor(host, model, key, npcActivityActors.length + 1)
+        : undefined;
+      if (activityActor) npcActivityActors.push(activityActor);
+      npcMixers.push({
+        host,
+        mixer,
+        walk,
+        run,
+        idle,
+        gesture,
+        active: idle,
+        animSpeed: charProf.animSpeed,
+        activityActor,
+        isMoving,
+        isGesturing,
+      });
+      npcMannerismActors.push({
+        host,
+        archetype,
+        phaseOffset: npcMannerismActors.length * 1.13,
+        isMoving,
+      });
+      return model;
+    };
+
+    villagers.forEach((v, i) => {
+      const isWoman = [0, 1, 5, 7, 9, 11].includes(i) || (i >= 12 && i % 2 === 0);
+      const womanPool = ["npc_villager_woman", "npc_farmer_woman", "npc_elder_woman"];
+      const manPool = ["npc_villager_man", "npc_farmer_man", "npc_elder_man"];
+      const key = isWoman ? womanPool[i % womanPool.length] : manPool[i % manPool.length];
+      attachNpcRig(
+        v.group,
+        key,
+        isWoman ? 1.58 : 1.68,
+        v.arms,
+        v.legs,
+        () => v.walker.path.length > 0,
+        () => v.greeting || simulationTime < (v.chatUntil ?? 0),
+      );
+    });
+    children.forEach((child, i) => {
+      attachNpcRig(
+        child.person.figure,
+        i % 2 === 0 ? "npc_girl" : "npc_boy",
+        1.14,
+        child.person.arms,
+        child.person.legs,
+        () => child.walker.path.length > 0,
+      );
+    });
+    attachNpcRig(lordActor.figure, "npc_landlord", 1.74, lordActor.arms, lordActor.legs, () => !landlordInspection.atStop);
+    attachNpcRig(landlordRider.figure, "npc_landlord", 1.74, landlordRider.arms, landlordRider.legs, () => false);
+    attachNpcRig(guardActor.figure, "npc_guard", 1.74, guardActor.arms, guardActor.legs, () => !landlordInspection.atStop);
+    escortActors.forEach((escort) =>
+      attachNpcRig(escort.figure, "npc_guard", 1.74, escort.arms, escort.legs, () => !landlordInspection.atStop),
+    );
+    attachNpcRig(ridingGuard.figure, "npc_guard", 1.74, ridingGuard.arms, ridingGuard.legs, () => false);
+    bearers.forEach((bearer) =>
+      attachNpcRig(bearer.figure, "npc_guard", 1.7, bearer.arms, bearer.legs, () => !manchalJourney.atStop),
+    );
+    attachNpcRig(elderRelative.figure, "npc_elder_woman", 1.52, elderRelative.arms, elderRelative.legs, () => false);
+    const kalariStudentModels: THREE.Group[] = [];
+    const kalariFallbackProps: THREE.Object3D[] = [];
+    kalariFigures.forEach((p, idx) => {
+      const model = attachNpcRig(
+        p.figure,
+        "npc_kalari_student",
+        1.7,
+        p.arms,
+        p.legs,
+        () => !kalariWorkers[idx]?.working,
+        () => Boolean(kalariWorkers[idx]?.working),
+      );
+      if (!model) return;
+      // Offset sparring partner #2 by half a combat cycle so slash & shield block alternate cleanly
+      if (idx === 1) {
+        const lastMixer = npcMixers[npcMixers.length - 1];
+        if (lastMixer?.gesture) lastMixer.gesture.time = lastMixer.gesture.getClip().duration * 0.5;
+      }
+      kalariStudentModels.push(model);
+      const invScale = 1 / Math.max(model.scale.x, 0.001);
+      const leftWrist = findRigBone(model, ["wrist.L", "wristL", "hand.L"]);
+      const rightWrist = findRigBone(model, ["wrist.R", "wristR", "hand.R"]);
+      const bucklerProp = p.arms[0]?.children[p.arms[0].children.length - 1];
+      const swordProp = p.arms[1]?.children[p.arms[1].children.length - 1];
+      if (leftWrist && bucklerProp) {
+        bucklerProp.position.set(0.04, 0.03, -0.02);
+        bucklerProp.rotation.set(0, Math.PI / 2, 0);
+        bucklerProp.scale.setScalar(invScale * 0.78);
+        leftWrist.add(bucklerProp);
+        kalariFallbackProps.push(bucklerProp);
+      }
+      if (rightWrist && swordProp) {
+        swordProp.position.set(0, 0.06, 0.03);
+        swordProp.rotation.set(Math.PI * 0.45, 0, 0);
+        swordProp.scale.setScalar(invScale * 0.72);
+        rightWrist.add(swordProp);
+        kalariFallbackProps.push(swordProp);
+      }
+    });
+    const kalariGuruModel = attachNpcRig(
+      kalariGuru.figure,
+      "npc_kalari_guru",
+      1.74,
+      kalariGuru.arms,
+      kalariGuru.legs,
+      () => !kalariGuruWorker.working,
+      () => kalariGuruWorker.working,
+    );
+    // Upgrade Kalari students & Guru with realistic Blender weapon GLBs when present
+    Promise.allSettled([
+      loadAssetTemplate("weapons/kalari_sword.glb"),
+      loadAssetTemplate("weapons/kalari_buckler.glb"),
+      loadAssetTemplate("weapons/kalari_kettukari.glb"),
+    ]).then(([swordRes, bucklerRes, staffRes]) => {
+      const swordTpl = swordRes.status === "fulfilled" ? swordRes.value : undefined;
+      const bucklerTpl = bucklerRes.status === "fulfilled" ? bucklerRes.value : undefined;
+      const staffTpl = staffRes.status === "fulfilled" ? staffRes.value : undefined;
+      if (swordTpl || bucklerTpl) {
+        kalariFallbackProps.forEach((prop) => (prop.visible = false));
+      }
+      for (const model of kalariStudentModels) {
+        const invScale = 1 / Math.max(model.scale.x, 0.001);
+        const leftWrist = findRigBone(model, ["wrist.L", "wristL", "hand.L"]);
+        const rightWrist = findRigBone(model, ["wrist.R", "wristR", "hand.R"]);
+        if (leftWrist && bucklerTpl) {
+          const b = bucklerTpl.clone(true);
+          b.scale.setScalar(invScale);
+          b.position.set(-0.04, 0.02, 0.03);
+          b.rotation.set(0, -Math.PI * 0.5, 0);
+          leftWrist.add(b);
+        }
+        if (rightWrist && swordTpl) {
+          const s = swordTpl.clone(true);
+          s.scale.setScalar(invScale);
+          s.position.set(0, 0.05, 0.02);
+          s.rotation.set(Math.PI * 0.42, 0, 0);
+          rightWrist.add(s);
+        }
+      }
+      if (kalariGuruModel && staffTpl) {
+        const rightWrist = findRigBone(kalariGuruModel, ["wrist.R", "wristR", "hand.R"]);
+        if (rightWrist) {
+          const invScale = 1 / Math.max(kalariGuruModel.scale.x, 0.001);
+          const staff = staffTpl.clone(true);
+          staff.scale.setScalar(invScale);
+          staff.position.set(0, 0.05, 0.02);
+          staff.rotation.set(Math.PI * 0.35, 0, 0.12);
+          rightWrist.add(staff);
+        }
+      }
+    });
+    paddyWorkers.forEach((w, idx) => {
+      const isWoman = idx === 2 || idx === 5;
+      attachNpcRig(w.group, isWoman ? "npc_farmer_woman" : "npc_farmer_man", isWoman ? 1.56 : 1.66, w.arms, w.legs, () => !paddyActors[idx]?.working, undefined, [w.upperBody, w.head]);
+    });
+    vegetableGrowers.forEach((actor, idx) =>
+      attachNpcRig(actor.group, idx % 2 ? "npc_farmer_woman" : "npc_farmer_man", idx % 2 ? 1.56 : 1.66, actor.arms, actor.legs, () => !actor.working),
+    );
+    oxHandlers.forEach((actor) =>
+      attachNpcRig(actor.group, "npc_farmer_man", 1.66, actor.arms, actor.legs, () => true),
+    );
+    coconutHarvesters.forEach((h) =>
+      attachNpcRig(h.person.figure, "npc_farmer_man", 1.66, h.person.arms, h.person.legs, () => h.walker.path.length > 0),
+    );
+    bankFisherPeople.forEach((p) =>
+      attachNpcRig(p.figure, "npc_fisherman", 1.68, p.arms, p.legs, () => false),
+    );
+    fishingBoats.forEach((b) =>
+      attachNpcRig(b.fisher, "npc_fisherman", 1.68, b.arms, b.legs, () => false),
+    );
+    marketSellers.forEach((actor, idx) =>
+      attachNpcRig(actor.group, idx % 2 ? "npc_villager_woman" : "npc_villager_man", idx % 2 ? 1.58 : 1.68, actor.arms, actor.legs, () => !actor.working),
+    );
+    attachNpcRig(teaSeller.group, "npc_elder_man", 1.64, teaSeller.arms, teaSeller.legs, () => !teaSeller.working);
+    attachNpcRig(toddySeller.group, "npc_villager_man", 1.68, toddySeller.arms, toddySeller.legs, () => !toddySeller.working);
+    toddyPatrons.forEach(({ actor }, idx) =>
+      attachNpcRig(actor.group, idx % 2 ? "npc_farmer_man" : "npc_fisherman", 1.66, actor.arms, actor.legs, () => !actor.working),
+    );
+    attachNpcRig(equipmentSeller.group, "npc_kalari_student", 1.7, equipmentSeller.arms, equipmentSeller.legs, () => !equipmentSeller.working);
+    templeWorshippers.forEach(({ actor }, idx) =>
+      attachNpcRig(actor.group, idx % 2 ? "npc_villager_woman" : "npc_elder_man", idx % 2 ? 1.58 : 1.64, actor.arms, actor.legs, () => !actor.working),
+    );
+    festivalVisitors.forEach((actor, idx) =>
+      attachNpcRig(actor.group, idx % 2 ? "npc_villager_woman" : "npc_villager_man", idx % 2 ? 1.58 : 1.68, actor.arms, actor.legs, () => !actor.working),
+    );
+    chendaPlayers.forEach((p) =>
+      attachNpcRig(p.figure, "npc_villager_man", 1.68, p.arms, p.legs, () => false, () => festivalDecorations.visible),
+    );
+    heritageWorkers.forEach(({ actor, index }) =>
+      attachNpcRig(actor.group, index ? "npc_elder_man" : "npc_farmer_man", 1.66, actor.arms, actor.legs, () => !actor.working),
+    );
+    cartDrivers.forEach((driver) =>
+      attachNpcRig(driver.figure, "npc_villager_man", 1.66, driver.arms, driver.legs, () => false),
+    );
+    landlordRelatives.forEach(({ person, isWoman }) =>
+      attachNpcRig(person.figure, isWoman ? "npc_landlord_woman" : "npc_landlord", isWoman ? 1.58 : 1.72, person.arms, person.legs, () => false),
+    );
+    elephantRiders.forEach((rider) =>
+      attachNpcRig(rider.figure, "npc_landlord", 1.7, rider.arms, rider.legs, () => false),
+    );
+    console.info(`Loaded ${templates.size} pre-British Kerala NPC models; upgraded ${npcMixers.length} characters.`);
+  })
+  .catch((error) => console.warn("Could not load Blender NPC assets", error));
 const vegetationWindUniforms: THREE.IUniform<number>[] = [];
 scene.traverse((object) => {
   if (!(object instanceof THREE.Mesh)) return;
@@ -7479,39 +7809,81 @@ scene.traverse((object) => {
 });
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-const contactShadows = new SSAOPass(
-  scene,
-  camera,
-  window.innerWidth,
-  window.innerHeight,
-  12,
-);
-contactShadows.kernelRadius = 0.55;
-contactShadows.minDistance = 0.0001;
-contactShadows.maxDistance = 0.008;
-composer.addPass(contactShadows);
+// OutputPass applies ACES Filmic tone mapping -> sRGB, then RDR2 grading runs cleanly in display space
+// (Removed SSAOPass double-scene G-buffer pass for a massive +50% FPS boost!)
 composer.addPass(new OutputPass());
+
+// RDR2-inspired old-era filmic color grading (lifted readable shadows, warm sunlit amber highlights, subtle vignette)
+const rdr2GradePass = new ShaderPass({
+  uniforms: {
+    tDiffuse: { value: null },
+    uDaylight: { value: 1.0 },
+    uTwilight: { value: 0.0 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uDaylight;
+    uniform float uTwilight;
+    varying vec2 vUv;
+    void main() {
+      vec4 tex = texture2D(tDiffuse, vUv);
+      vec3 c = tex.rgb;
+      float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+      float shadowMask = 1.0 - smoothstep(0.0, 0.38, luma);
+      c += shadowMask * mix(vec3(0.015, 0.020, 0.030), vec3(0.032, 0.028, 0.024), uDaylight);
+      c = mix(vec3(luma), c, 0.94);
+      vec3 shadowTint = mix(vec3(0.92, 0.96, 1.05), vec3(0.98, 0.99, 1.02), uDaylight);
+      vec3 highlightTint = mix(vec3(1.04, 1.00, 0.93), vec3(1.10, 0.96, 0.84), uTwilight);
+      c *= mix(shadowTint, highlightTint, smoothstep(0.18, 0.82, luma));
+      vec2 centered = vUv - 0.5;
+      float vig = 1.0 - dot(centered, centered) * 0.20;
+      c *= clamp(vig, 0.88, 1.0);
+      gl_FragColor = vec4(clamp(c, 0.0, 1.0), tex.a);
+    }
+  `,
+});
+composer.addPass(rdr2GradePass);
+
+// Cached HUD & camera scratch objects (eliminates 60fps DOM queries & GC allocations)
+const equipmentStatusEl = document.querySelector<HTMLElement>("#equipment-status")!;
+const foodStatusEl = document.querySelector<HTMLElement>("#food-status")!;
+const worldVignetteEl = document.querySelector<HTMLElement>(".world-vignette")!;
+const desiredCameraVec = new THREE.Vector3();
+let lastHudMetaUpdate = -1;
+let lastDatasetSync = -1;
+let renderFrameCount = 0;
+let lastTipsyState = false;
 const qualitySelect =
   document.querySelector<HTMLSelectElement>("#graphics-quality")!;
 let realisticGraphics = window.innerWidth > 760;
 const setGraphicsQuality = () => {
   realisticGraphics = qualitySelect.value === "high";
   renderer.setPixelRatio(
-    Math.min(window.devicePixelRatio, realisticGraphics ? 1.5 : 1),
+    Math.min(window.devicePixelRatio, realisticGraphics ? 1.2 : 1),
   );
+  const shadowRes = realisticGraphics ? 1536 : 1024;
+  if (sun.shadow.mapSize.x !== shadowRes) {
+    sun.shadow.mapSize.set(shadowRes, shadowRes);
+    if (sun.shadow.map) {
+      sun.shadow.map.dispose();
+      sun.shadow.map = null;
+    }
+  }
+  renderer.shadowMap.needsUpdate = true;
   composer.setPixelRatio(renderer.getPixelRatio());
   composer.setSize(window.innerWidth, window.innerHeight);
-  // Contact shadows are calculated at reduced resolution to bound GPU cost.
-  contactShadows.setSize(
-    Math.ceil(window.innerWidth * 0.65),
-    Math.ceil(window.innerHeight * 0.65),
-  );
   world.dataset.graphics = realisticGraphics ? "realistic" : "balanced";
 };
 qualitySelect.value = realisticGraphics ? "high" : "balanced";
 setGraphicsQuality();
 qualitySelect.addEventListener("change", setGraphicsQuality);
-const dryEarthColour = roadMaterial.color.clone();
 const worldSolids: Solid[] = [];
 const bananaPlants: THREE.Group[] = [];
 const bananaRandom = seeded(1975);
@@ -7541,13 +7913,29 @@ for (let attempt = 0; attempt < 1600 && bananaPlants.length < 18; attempt++) {
     )
   )
     continue;
-  const plant = makeBananaPlant(bananaPlants.length);
+  const plant = new THREE.Group();
   plant.position.set(x, terrainHeight(x, z), z);
   plant.rotation.y = bananaRandom() * Math.PI * 2;
   scene.add(plant);
   bananaPlants.push(plant);
 }
 world.dataset.bananaPlants = String(bananaPlants.length);
+loadAssetTemplate("flora/cultivation_banana.glb")
+  .then((bananaTemplate) => {
+    bananaPlants.forEach((plant, index) => {
+      const height = 3.3 * (0.88 + ((index * 3) % 5) * 0.045);
+      plant.clear();
+      plant.add(fitImportedModel(bananaTemplate.clone(true), height));
+      vegetationWindSways.push({
+        group: plant,
+        phase: index * 6.51,
+        amplitude: 0.016,
+        baseX: plant.rotation.x,
+        baseZ: plant.rotation.z,
+      });
+    });
+  })
+  .catch((error) => console.warn("Could not load flora/cultivation_banana.glb", error));
 const actorRoots = new Set<THREE.Object3D>([
   player,
   ...villagers.map((person) => person.group),
@@ -7651,16 +8039,7 @@ coconutPalms.forEach((palm) =>
     rotation: 0,
   }),
 );
-scene.children.forEach((object) => {
-  if (object instanceof THREE.Mesh && object.geometry === rockGeometry)
-    worldSolids.push({
-      x: object.position.x,
-      z: object.position.z,
-      halfX: object.scale.x * 0.7,
-      halfZ: object.scale.z * 0.7,
-      rotation: object.rotation.y,
-    });
-});
+// Legacy rockGeometry collision loop removed (rocks are now instanced Sketchfab boulders).
 children.forEach((child, index) => {
   const base = findGatheringSpot(
     child.home,
@@ -7913,14 +8292,109 @@ setWalkerMotion({
   yield: pedestrianYield,
 });
 
+// Standalone GPU-simulated Kerala world cloths (temple flags, Kalari banners, market awnings & clotheslines)
+const setupWorldCloths = () => {
+  const base = import.meta.env.BASE_URL;
+  const poleMat = new THREE.MeshStandardMaterial({ color: "#6d4e34", roughness: 0.92 });
+  const ropeMat = new THREE.MeshStandardMaterial({ color: "#bfa57a", roughness: 0.95 });
+
+  const addFlagpole = (fx: number, fz: number, rotY: number, height = 4.6) => {
+    const fy = terrainHeight(fx, fz);
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.06, height, 8), poleMat);
+    pole.position.set(fx, fy + height * 0.5, fz);
+    pole.castShadow = true;
+    scene.add(pole);
+    void placeWorldCloth(
+      base,
+      "cloth_temple_flag",
+      scene,
+      [fx, fy + height - 0.12, fz],
+      rotY,
+      1.15,
+      { windAmp: 0.22, flutterFreq: 5.8, gravitySag: 0.012 },
+    ).catch(() => {});
+  };
+
+  // 1) Temple Kodi festival flags flanking the temple entrance
+  addFlagpole(templeSite[0] - 3.8, templeSite[1] + 5.8, -0.3, 4.8);
+  addFlagpole(templeSite[0] + 3.8, templeSite[1] + 5.8, 0.3, 4.8);
+
+  // 2) Kalari entrance ceremonial flags (very close to player spawn!)
+  addFlagpole(kalariSite[0] - 6.4, kalariSite[1] - 2.6, 0.2, 4.2);
+  addFlagpole(kalariSite[0] - 6.4, kalariSite[1] + 2.6, -0.2, 4.2);
+
+  // 3) Prominent courtyard clothesline right near the village center / spawn road + beside cottages
+  const addClothesline = (cx: number, cz: number, rotY: number, seedIdx: number) => {
+    const gy = terrainHeight(cx, cz);
+    const lineGroup = new THREE.Group();
+    lineGroup.position.set(cx, gy, cz);
+    lineGroup.rotation.y = rotY;
+    for (const px of [-1.45, 1.45]) {
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.052, 1.95, 7), poleMat);
+      post.position.set(px, 0.97, 0);
+      post.castShadow = true;
+      lineGroup.add(post);
+    }
+    const rope = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 2.9, 5), ropeMat);
+    rope.rotation.z = Math.PI * 0.5;
+    rope.position.set(0, 1.82, 0);
+    lineGroup.add(rope);
+    scene.add(lineGroup);
+
+    const clothKeys = ["cloth_hanging_laundry", "cloth_mundu_kalli", "cloth_mundu_kasavu"] as const;
+    for (const [slotIdx, offset] of ([-0.72, 0.0, 0.72] as const).entries()) {
+      const key = clothKeys[(seedIdx + slotIdx) % clothKeys.length];
+      void placeWorldCloth(
+        base,
+        key,
+        lineGroup,
+        [offset, 1.81, 0],
+        0,
+        key === "cloth_hanging_laundry" ? 0.95 : 0.85,
+        { windAmp: 0.16, flutterFreq: 3.4 + seedIdx * 0.3 + slotIdx * 0.4, gravitySag: 0.015 },
+      ).catch(() => {});
+    }
+  };
+
+  // Hero clothesline visible near starting village road
+  addClothesline(7.5, 4.5, 0.4, 0);
+
+  let placedLines = 0;
+  for (let i = 0; i < buildingSites.length && placedLines < 4; i++) {
+    const [hx, hz] = buildingSites[i];
+    const rot = backyardPlans[i]?.rotation ?? 0;
+    const cx = hx + Math.cos(rot) * 3.8;
+    const cz = hz - Math.sin(rot) * 3.8;
+    if (distanceToRoad(cx, cz) < 2.6 || distanceToRiver(cx, cz) < 5.0 || getWaterInfo(cx, cz)) continue;
+    addClothesline(cx, cz, rot + Math.PI * 0.5, placedLines + 1);
+    placedLines++;
+  }
+
+  // 4) Billowing handloom cloth awnings above the market stalls
+  marketStalls.slice(0, 3).forEach((stall, idx) => {
+    void placeWorldCloth(
+      base,
+      "cloth_market_awning",
+      stall,
+      [0, 2.62, 0],
+      0,
+      1.04,
+      { windAmp: 0.10, flutterFreq: 3.2 + idx * 0.35, gravitySag: 0.01 },
+    ).catch(() => {});
+  });
+};
+setupWorldCloths();
+
 const animate = () => {
   requestAnimationFrame(animate);
   clock.update();
   const delta = paused ? 0 : Math.min(clock.getDelta(), 0.04);
   if (gameStarted) simulationTime += delta;
   const elapsed = simulationTime;
+  const shouldSyncDataset = elapsed - lastDatasetSync > 0.5;
   for (const uniform of vegetationWindUniforms) uniform.value = elapsed;
   const windStrength = reducedMotion.matches ? 0 : 0.65 + Math.sin(elapsed * 0.23) * 0.22;
+  updateClothPhysics(elapsed, windStrength);
   for (const sway of vegetationWindSways) {
     const gust = Math.sin(elapsed * 0.72 + sway.phase) * sway.amplitude * windStrength;
     sway.group.rotation.x = sway.baseX + gust * 0.7;
@@ -7952,6 +8426,7 @@ const animate = () => {
   );
   festivalDecorations.visible = festival.decorated;
   festivalElephants.forEach((elephant) => (elephant.visible = festival.active));
+  if (ENABLE_LEGACY_NPCS) {
   chendaPlayers.forEach((person, index) => {
     person.figure.visible = festival.active;
     person.arms.forEach(
@@ -8067,17 +8542,29 @@ const animate = () => {
       child.walker.z,
     );
   }
-  world.dataset.festival = JSON.stringify({
-    ...festival,
-    elephants: festival.active ? 3 : 0,
-    drummers: festival.active ? 5 : 0,
-    children: children.filter((child) => child.person.figure.visible).length,
-  });
+  }
+  if (shouldSyncDataset) {
+    world.dataset.festival = JSON.stringify({
+      ...festival,
+      elephants: festival.active ? 3 : 0,
+      drummers: festival.active ? 5 : 0,
+      children: children.filter((child) => child.person.figure.visible).length,
+    });
+  }
   const rainWetness = weatherCycle.sample(elapsed).rain;
-  roadMaterial.roughness = 0.94 - rainWetness * 0.38;
-  roadMaterial.color
-    .copy(dryEarthColour)
-    .multiplyScalar(1 - rainWetness * 0.18);
+  updateKeralaRoadWeather(keralaRoadSystem, rainWetness);
+  sketchfabNature.update(elapsed);
+  updateKeralaAnimalSystem(
+    keralaAnimalSystem,
+    delta,
+    elapsed,
+    dayState.hour,
+    playerState.x,
+    playerState.z,
+    keys.has("shift") ? 4.5 : 2.2,
+    terrainHeight,
+    getWaterInfo,
+  );
   snapshotCrowd();
   skyDome.position.set(playerState.x, playerState.y, playerState.z);
   skyMaterial.uniforms.zenith.value
@@ -8336,7 +8823,9 @@ const animate = () => {
       const animationName = horseMode === "ridden"
         ? "sitting_idle"
         : playerState.swimming
-          ? "swim_fwd"
+          ? inputLength > 0.04
+            ? "swim_fwd"
+            : "swim_idle"
           : !playerState.grounded
             ? "jump_air"
             : inputLength > 0.04 && keys.has("shift")
@@ -8385,6 +8874,27 @@ const animate = () => {
         playerRidingPoseCaptured = false;
       }
       playerAnimationMixer.update(delta);
+    }
+    for (const npc of npcMixers) {
+      if (!visibleActor(npc.host)) continue;
+      const pausedForAct = npc.activityActor ? isNpcPausedForActivity(npc.activityActor) : false;
+      const sprinting = npc.activityActor ? isNpcSprinting(npc.activityActor) : false;
+      const next =
+        (pausedForAct && npc.idle) ||
+        (npc.isGesturing?.() && npc.gesture) ||
+        (npc.isMoving() && sprinting && npc.run) ||
+        (npc.isMoving() && npc.walk) ||
+        npc.idle;
+      if (next && next !== npc.active) {
+        npc.active?.fadeOut(0.22);
+        next.reset().fadeIn(0.22).play();
+        npc.active = next;
+      }
+      npc.mixer.update(delta * npc.animSpeed);
+    }
+    if (ENABLE_LEGACY_NPCS) {
+      updateNpcActivities(npcActivityActors, scene, terrainHeight, delta, elapsed, dayState.hour >= 20 || dayState.hour < 5);
+      updateCharacterMannerisms(npcMannerismActors, elapsed, delta);
     }
     if (horseMode === "ridden") {
       if (!playerRidingPoseCaptured && playerRidingBones.size > 0) {
@@ -8469,7 +8979,7 @@ const animate = () => {
       delta,
     );
     playerPose.scale.y = 1 + idleBreath;
-    world.dataset.horse = horseMode;
+    if (shouldSyncDataset) world.dataset.horse = horseMode;
     swimWake.visible = playerState.swimming && waterInfo !== undefined;
     if (swimWake.visible && waterInfo) {
       swimWake.position.set(
@@ -8481,16 +8991,18 @@ const animate = () => {
         1 + (reducedMotion.matches ? 0 : Math.sin(elapsed * 2.8) * 0.08),
       );
     }
-    world.dataset.movement =
-      horseMode === "ridden"
-        ? "riding"
-        : playerState.swimming
-          ? "swimming"
-          : waterInfo
-            ? "wading"
-            : onBridge
-              ? "bridge"
-              : "walking";
+    if (shouldSyncDataset) {
+      world.dataset.movement =
+        horseMode === "ridden"
+          ? "riding"
+          : playerState.swimming
+            ? "swimming"
+            : waterInfo
+              ? "wading"
+              : onBridge
+                ? "bridge"
+                : "walking";
+    }
     const nearestRelic = relics.some(
       (relic) =>
         !relic.collected &&
@@ -8641,6 +9153,7 @@ const animate = () => {
       lastMinimapUpdate = elapsed;
     }
   }
+  if (ENABLE_LEGACY_NPCS) {
   const wageDay = simulationDay(elapsed);
   wageEmployees.forEach((employee) =>
     updateWageVisit(
@@ -8828,13 +9341,13 @@ const animate = () => {
       (!employee || employee.visit.stage === "working");
     if (actor.boat)
       actor.boat.working = actor.working && !offDuty && !dockingForTrade;
-    actor.equipment?.forEach((item) => (item.visible = actor.working));
-    if (actor.working && actor.workParent) {
+    actor.equipment?.forEach((item) => (item.visible = ENABLE_LEGACY_NPCS && actor.working));
+    if (ENABLE_LEGACY_NPCS && actor.working && actor.workParent) {
       if (actor.group.parent !== actor.workParent)
         actor.workParent.add(actor.group);
       actor.group.position.copy(actor.localPosition);
       actor.group.rotation.copy(actor.localRotation);
-    } else if (!actor.working) {
+    } else if (ENABLE_LEGACY_NPCS && !actor.working) {
       if (actor.group.parent !== scene) scene.attach(actor.group);
       actor.group.position.set(
         actor.duty.walker.x,
@@ -8872,7 +9385,7 @@ const animate = () => {
         actor.arms.forEach((arm) => (arm.rotation.x = 0.15));
       }
     }
-    actor.group.visible = !step.atHome;
+    actor.group.visible = ENABLE_LEGACY_NPCS ? !step.atHome : false;
   }
   marketSellers.forEach((seller, index) => {
     if (seller.working)
@@ -8880,7 +9393,7 @@ const animate = () => {
         0.45 +
         (reducedMotion.matches ? 0 : Math.sin(elapsed * 1.3 + index) * 0.2);
   });
-  teaFire.visible = teaSeller.working;
+  teaFire.visible = !teaShopReplaced && teaSeller.working;
   toddyPatrons.forEach(({ actor }) => {
     if (!actor.working) return;
     actor.legs.forEach((leg) => (leg.rotation.x = -1.15));
@@ -8935,25 +9448,27 @@ const animate = () => {
         )),
     );
   });
-  world.dataset.homesteads = String(scatteredHomes.length);
-  world.dataset.vegetables = vegetablePlots.map((plot) => plot.crop).join(",");
-  world.dataset.workers = JSON.stringify({
-    working: workerActors.filter((actor) => actor.working).length,
-    home: workerActors.filter(
-      (actor) => actor.duty.destination === "home" && actor.duty.arrived,
-    ).length,
-    commuting: workerActors.filter((actor) => !actor.duty.arrived).length,
-  });
-  world.dataset.wages = JSON.stringify({
-    queued: wageEmployees.filter((e) => e.visit.stage === "queue").length,
-    paid: wageDesk.transactions,
-    serving: wageDesk.serving,
-  });
-  world.dataset.fishSales = String(fishSales);
-  world.dataset.fishTraders = workerActors
-    .filter((actor) => actor.fishTrade)
-    .map((actor) => actor.fishTrade!.phase)
-    .join(",");
+  if (shouldSyncDataset) {
+    world.dataset.homesteads = String(scatteredHomes.length);
+    world.dataset.vegetables = vegetablePlots.map((plot) => plot.crop).join(",");
+    world.dataset.workers = JSON.stringify({
+      working: workerActors.filter((actor) => actor.working).length,
+      home: workerActors.filter(
+        (actor) => actor.duty.destination === "home" && actor.duty.arrived,
+      ).length,
+      commuting: workerActors.filter((actor) => !actor.duty.arrived).length,
+    });
+    world.dataset.wages = JSON.stringify({
+      queued: wageEmployees.filter((e) => e.visit.stage === "queue").length,
+      paid: wageDesk.transactions,
+      serving: wageDesk.serving,
+    });
+    world.dataset.fishSales = String(fishSales);
+    world.dataset.fishTraders = workerActors
+      .filter((actor) => actor.fishTrade)
+      .map((actor) => actor.fishTrade!.phase)
+      .join(",");
+  }
   for (const [workerIndex, worker] of paddyWorkers.entries()) {
     const active = gameStarted && paddyActors[workerIndex].working;
     if (!paddyActors[workerIndex].working) {
@@ -9029,41 +9544,47 @@ const animate = () => {
       leg.rotation.x = THREE.MathUtils.damp(leg.rotation.x, step, 6, delta);
     });
   }
-  for (const [index, practitioner] of kalariFigures.entries()) {
-    const active = kalariWorkers[index].working && gameStarted;
-    if (!kalariWorkers[index].working) continue;
-    const drill = sampleKalariDrill(
-      reducedMotion.matches ? 0 : elapsed,
-      index === 2 ? 3 : 0,
-    );
-    practitioner.figure.position.y = 0.1 - (active ? drill.stance * 0.2 : 0);
-    practitioner.arms.forEach((arm, side) => {
-      const direction = side === 0 ? 1 : -1;
-      arm.rotation.z = THREE.MathUtils.damp(
-        arm.rotation.z,
-        active ? direction * 0.35 : 0,
-        4,
-        delta,
-      );
-      arm.rotation.x = THREE.MathUtils.damp(
-        arm.rotation.x,
-        active ? (side === 1 ? drill.sword : drill.shield) : 0,
-        4,
-        delta,
-      );
-    });
-    practitioner.legs.forEach((leg, side) => {
-      const target = active ? (side === 0 ? drill.stance : -drill.stance) : 0;
-      leg.rotation.x = THREE.MathUtils.damp(leg.rotation.x, target, 4, delta);
-      leg.rotation.z = THREE.MathUtils.damp(
-        leg.rotation.z,
-        active ? (side === 0 ? 0.18 : -0.18) : 0,
-        4,
-        delta,
-      );
-    });
   }
+  if (ENABLE_LEGACY_NPCS) {
+    const dailySchedule = getDailyScheduleState(dayState.hour);
+    updateKalariPracticePhysics(
+      {
+        figure: kalariGuru.figure,
+        baseX: 0,
+        baseZ: -1.85,
+        baseRotY: Math.PI,
+        working: kalariGuruWorker.working,
+      },
+      kalariFigures.map((practitioner, index) => ({
+        figure: practitioner.figure,
+        baseX: kalariStudentAnchors[index][0],
+        baseZ: kalariStudentAnchors[index][1],
+        baseRotY: kalariStudentAnchors[index][2],
+        working: kalariWorkers[index].working,
+      })),
+      reducedMotion.matches ? 0 : elapsed,
+      delta,
+      gameStarted && dailySchedule.kalariActive,
+    );
+    applyNpcCrowdPhysics(
+      villagers.map((v) => ({ object: v.group, radius: 0.32, mobile: v.walker.path.length > 0 })),
+      playerState.x,
+      playerState.z,
+      terrainHeight,
+      delta,
+    );
+  }
+  mixamoNpcSystem.update(
+    gameStarted && !reducedMotion.matches ? delta : 0,
+    elapsed,
+    playerState.x,
+    playerState.z,
+    dayState.hour,
+    dayState.daylight,
+    rainWetness,
+  );
   let activeClimbers = 0;
+  if (ENABLE_LEGACY_NPCS)
   for (const harvester of coconutHarvesters) {
     const workday = dayState.hour >= 6 && dayState.hour < 19;
     const motionEnabled = gameStarted && !reducedMotion.matches;
@@ -9273,11 +9794,13 @@ const animate = () => {
     }
     if (climbing && motionEnabled) activeClimbers++;
   }
-  world.dataset.climbers = String(activeClimbers);
-  world.dataset.coconutSales = String(coconutSales);
-  world.dataset.coconutDeliveries = coconutHarvesters
-    .map((h) => h.delivery)
-    .join(",");
+  if (shouldSyncDataset) {
+    world.dataset.climbers = String(activeClimbers);
+    world.dataset.coconutSales = String(coconutSales);
+    world.dataset.coconutDeliveries = coconutHarvesters
+      .map((h) => h.delivery)
+      .join(",");
+  }
   for (const fish of riverFish) {
     const progress = (fish.start + elapsed * fish.speed) % 1;
     const point = riverRoute.getPointAt(progress);
@@ -9294,10 +9817,17 @@ const animate = () => {
       Math.atan2(-tangent.x, -tangent.z) +
       Math.sin(elapsed * 0.8 + fish.phase) * 0.18;
     fish.group.rotation.x = leap > 0.08 ? -0.55 : 0;
-    fish.group.children[1].rotation.z =
-      Math.sin(elapsed * 6 + fish.phase) *
-      (reducedMotion.matches ? 0.08 : 0.35);
+    const tailNode =
+      fish.group.children[1] ??
+      fish.group.children[0]?.getObjectByName("TailFin") ??
+      fish.group.children[0];
+    if (tailNode) {
+      tailNode.rotation.y =
+        Math.sin(elapsed * 8 + fish.phase) *
+        (reducedMotion.matches ? 0.08 : 0.28);
+    }
   }
+  if (ENABLE_LEGACY_NPCS)
   for (const boat of fishingBoats) {
     const progress = THREE.MathUtils.clamp(
       boat.start +
@@ -9365,6 +9895,8 @@ const animate = () => {
     ropePositions.needsUpdate = true;
   }
   const actorDelta = gameStarted ? delta : 0;
+  let lordPraying = false;
+  if (ENABLE_LEGACY_NPCS) {
   const inspection = advanceHousehold(
     householdCurfews[0],
     landlordInspection,
@@ -9376,7 +9908,7 @@ const animate = () => {
     estateGate,
     estateCourtyard,
   );
-  procession.visible = !inspection.indoors;
+  procession.visible = ENABLE_LEGACY_NPCS && !inspection.indoors;
   procession.position.set(
     landlordInspection.walker.x,
     terrainHeight(landlordInspection.walker.x, landlordInspection.walker.z),
@@ -9394,7 +9926,7 @@ const animate = () => {
   );
   procession.rotation.y += lordTurn * (1 - Math.exp(-3 * actorDelta));
   const walkingLord = inspection.traveled > 0;
-  const lordPraying =
+  lordPraying =
     inspection.inspecting && inspection.label === "Temple flower offering";
   lordFlowers.visible = lordPraying;
   [lordActor, guardActor, ...escortActors].forEach((person, personIndex) => {
@@ -9437,46 +9969,59 @@ const animate = () => {
       local.z * Math.cos(procession.rotation.y);
     local.y = terrainHeight(x, z) - procession.position.y;
   });
-  world.dataset.landlord =
-    inspection.phase === "visiting" && !inspection.inspecting
-      ? `Walking to ${inspection.label}`
-      : inspection.label;
+  if (shouldSyncDataset) {
+    world.dataset.landlord =
+      inspection.phase === "visiting" && !inspection.inspecting
+        ? `Walking to ${inspection.label}`
+        : inspection.label;
+  }
+  }
+  const kalavandiSampler: KalavandiTerrainSampler = {
+    terrainHeight,
+    bridgeHeightAt: (x, z) => bridgeHeightAt(bridgeSpan, x, z),
+    distanceToRoad,
+  };
+  const landlordWantsMove =
+    householdCurfews[1].phase !== "indoors" && !familyJourney.atStop;
+  const landlordStepSpeed = computeKalavandiStepSpeed(
+    landlordCart,
+    KALAVANDI_LANDLORD_SPEED,
+    landlordWantsMove,
+    actorDelta,
+    kalavandiSampler,
+  );
   const family = advanceHousehold(
     householdCurfews[1],
     familyJourney,
     familyStops,
     dayState.hour,
     actorDelta,
-    2.5,
+    landlordStepSpeed,
     villagePaths.findPath,
     estateGate,
     estatePoint(-2, 8),
   );
   landlordCart.group.visible = !family.indoors;
-  landlordCart.group.position.set(
+  landlordCart.stride += family.traveled * 4;
+  if (family.traveled > 0) {
+    const facing = Math.atan2(-family.directionX, -family.directionZ);
+    landlordCart.group.rotation.y +=
+      Math.atan2(
+        Math.sin(facing - landlordCart.group.rotation.y),
+        Math.cos(facing - landlordCart.group.rotation.y),
+      ) *
+      (1 - Math.exp(-5 * actorDelta));
+  }
+  updateKalavandiPhysics(
+    landlordCart,
     familyJourney.walker.x,
-    terrainHeight(familyJourney.walker.x, familyJourney.walker.z),
     familyJourney.walker.z,
+    family.traveled,
+    actorDelta,
+    kalavandiSampler,
+    reducedMotion.matches,
   );
-  if (family.traveled > 0)
-    landlordCart.group.rotation.y = Math.atan2(
-      -family.directionX,
-      -family.directionZ,
-    );
-  landlordCart.wheels.forEach((wheel) =>
-    wheel.rotateZ(-family.traveled / 0.66),
-  );
-  landlordCart.horseLegs.forEach(
-    (leg, index) =>
-      (leg.rotation.x = THREE.MathUtils.damp(
-        leg.rotation.x,
-        family.traveled > 0
-          ? Math.sin(familyJourney.stride + index * Math.PI * 0.5) * 0.3
-          : 0,
-        8,
-        actorDelta,
-      )),
-  );
+  if (ENABLE_LEGACY_NPCS) {
   const carried = advanceHousehold(
     householdCurfews[2],
     manchalJourney,
@@ -9520,9 +10065,11 @@ const animate = () => {
     local.y = terrainHeight(x, z) - manchal.position.y;
   });
   procession.updateMatrixWorld(true);
-  world.dataset.household = householdCurfews
-    .map((curfew) => curfew.phase)
-    .join(",");
+  if (shouldSyncDataset) {
+    world.dataset.household = householdCurfews
+      .map((curfew) => curfew.phase)
+      .join(",");
+  }
   const lordPosition = new THREE.Vector3();
   lordActor.figure.getWorldPosition(lordPosition);
   const nightHours = dayState.hour >= 19.5 || dayState.hour < 5.5;
@@ -9780,11 +10327,13 @@ const animate = () => {
       );
     });
   }
-  world.dataset.conversations = String(
-    villagers.filter(
-      (person) => elapsed < (person.chatUntil ?? 0) && !nightHours,
-    ).length / 2,
-  );
+  if (shouldSyncDataset) {
+    world.dataset.conversations = String(
+      villagers.filter(
+        (person) => elapsed < (person.chatUntil ?? 0) && !nightHours,
+      ).length / 2,
+    );
+  }
   neighbourBubbles.forEach((bubble, index) => {
     const person = villagers[index];
     bubble.visible =
@@ -9800,6 +10349,7 @@ const animate = () => {
       person.group.position.z,
     );
   });
+  }
   for (const animal of ambientAnimals) {
     if (animal.nightPatrol) {
       const patrol = animal.nightPatrol;
@@ -9842,6 +10392,28 @@ const animate = () => {
       );
       continue;
     }
+    // Proximity-flee: prey animals bolt away from the player when it gets
+    // close. Predators live in the night-patrol branch and never flee.
+    {
+      const px = player.position.x - animal.group.position.x;
+      const pz = player.position.z - animal.group.position.z;
+      const playerDist = Math.hypot(px, pz);
+      const fleeRadius = AMBIENT_FLEE_RADIUS[animal.species] ?? 6;
+      if (fleeRadius > 0 && playerDist < fleeRadius && playerDist > 0.001) {
+        if (elapsed >= (animal.startledUntil ?? 0))
+          animal.startledUntil = elapsed + 3.5;
+        const fx = animal.group.position.x - (px / playerDist) * 5;
+        const fz = animal.group.position.z - (pz / playerDist) * 5;
+        animal.targetX = isKalariAnimalKeepOut(fx, fz) ? animal.anchorX : fx;
+        animal.targetZ = isKalariAnimalKeepOut(fx, fz) ? animal.anchorZ : fz;
+        animal.waitUntil = 0;
+      }
+    }
+    if (isKalariAnimalKeepOut(animal.group.position.x, animal.group.position.z)) {
+      animal.targetX = animal.anchorX;
+      animal.targetZ = animal.anchorZ;
+      animal.waitUntil = 0;
+    }
     const dx = animal.targetX - animal.group.position.x;
     const dz = animal.targetZ - animal.group.position.z;
     const distanceToTarget = Math.hypot(dx, dz);
@@ -9854,7 +10426,7 @@ const animate = () => {
       const wild = !["cow", "hen", "duck"].includes(animal.species);
       const allowed = wild
         ? isForestHabitat(targetX, targetZ)
-        : !insideTempleGround(targetX, targetZ, 2);
+        : !insideTempleGround(targetX, targetZ, 2) && !isKalariAnimalKeepOut(targetX, targetZ);
       animal.targetX = allowed ? targetX : animal.anchorX;
       animal.targetZ = allowed ? targetZ : animal.anchorZ;
       animal.waitUntil =
@@ -9881,16 +10453,38 @@ const animate = () => {
         crowdBodies,
       );
       const [x, z] = next;
-      const hop =
-        animal.species === "rabbit" && !reducedMotion.matches
-          ? Math.abs(Math.sin(elapsed * 8 + animal.phase)) * 0.08
-          : 0;
-      animal.group.position.set(
-        x,
-        (animal.surfaceY ?? terrainHeight(x, z)) + hop,
-        z,
-      );
-      animal.group.rotation.y = Math.atan2(-moveX, -moveZ);
+      const nextForbidden = isKalariAnimalKeepOut(x, z);
+      const currForbidden = isKalariAnimalKeepOut(animal.group.position.x, animal.group.position.z);
+      const movingOut =
+        Math.hypot(x - animal.anchorX, z - animal.anchorZ) <
+        Math.hypot(animal.group.position.x - animal.anchorX, animal.group.position.z - animal.anchorZ);
+      if (!nextForbidden || (currForbidden && movingOut)) {
+        const hop =
+          animal.species === "rabbit" && !animal.elkMixer && !reducedMotion.matches
+            ? Math.abs(Math.sin(elapsed * 8 + animal.phase)) * 0.08
+            : 0;
+        animal.group.position.set(
+          x,
+          (animal.surfaceY ?? terrainHeight(x, z)) + hop,
+          z,
+        );
+        animal.group.rotation.y = Math.atan2(-moveX, -moveZ);
+      } else {
+        animal.targetX = animal.anchorX;
+        animal.targetZ = animal.anchorZ;
+      }
+    }
+    if (animal.elkMixer) {
+      animal.elkMixer.update(delta);
+      const startled = elapsed < (animal.startledUntil ?? 0);
+      const want = isMoving
+        ? (startled ? animal.elkRun : animal.elkWalk) ?? animal.elkIdle
+        : animal.elkIdle;
+      if (animal.elkActive !== want) {
+        animal.elkActive?.fadeOut(0.25);
+        if (want) want.reset().fadeIn(0.25).play();
+        animal.elkActive = want;
+      }
     }
     animal.legs.forEach((leg, index) => {
       const gaitRate =
@@ -9926,31 +10520,57 @@ const animate = () => {
       3.5,
       delta,
     );
+    // Stuck recovery: if the animal is meant to be moving but barely advances,
+    // pick a fresh target so it never freezes against an obstacle.
+    if (isMoving) {
+      const moved = Math.hypot(
+        animal.group.position.x - (animal.lastX ?? animal.group.position.x),
+        animal.group.position.z - (animal.lastZ ?? animal.group.position.z),
+      );
+      if (moved < 0.06) {
+        if (animal.stuckSince == null) animal.stuckSince = elapsed;
+        else if (elapsed - animal.stuckSince > 1.5) {
+          const angle = random() * Math.PI * 2;
+          const distance = Math.sqrt(random()) * animal.radius;
+          animal.targetX = animal.anchorX + Math.cos(angle) * distance;
+          animal.targetZ = animal.anchorZ + Math.sin(angle) * distance;
+          animal.waitUntil = elapsed + 0.4;
+          animal.stuckSince = elapsed;
+        }
+      } else {
+        animal.stuckSince = undefined;
+      }
+    }
+    animal.lastX = animal.group.position.x;
+    animal.lastZ = animal.group.position.z;
   }
-  world.dataset.predators = JSON.stringify(
-    ambientAnimals
-      .filter((animal) => animal.nightPatrol)
-      .map((animal) => ({
-        species: animal.species,
-        visible: animal.group.visible,
-        resting: animal.nightPatrol!.resting,
-        x: animal.group.position.x,
-        z: animal.group.position.z,
-      })),
-  );
+  if (shouldSyncDataset) {
+    world.dataset.predators = JSON.stringify(
+      ambientAnimals
+        .filter((animal) => animal.nightPatrol)
+        .map((animal) => ({
+          species: animal.species,
+          visible: animal.group.visible,
+          resting: animal.nightPatrol!.resting,
+          x: animal.group.position.x,
+          z: animal.group.position.z,
+        })),
+    );
+  }
   for (const ox of oxTeams) {
     const active =
       gameStarted && isWorkday(dayState.hour) && oxHandlers[ox.index].working;
     if (active && !reducedMotion.matches) ox.time += delta;
-    const cycle = ox.time % 24;
-    const forward = cycle < 12;
-    const progress = forward ? cycle / 12 : (24 - cycle) / 12;
-    ox.team.position.set(
-      ox.x - 1.5 + progress * 3,
-      paddyWaterLevels[ox.index],
-      ox.z - 1,
-    );
-    ox.team.rotation.y = forward ? -Math.PI / 2 : Math.PI / 2;
+    // Smooth continuous elliptical plowing circuit around the flooded paddy plot (never snaps 180 deg!)
+    const theta = (ox.time * 0.22 + ox.index * 2.1) % (Math.PI * 2);
+    const rx = 3.1;
+    const rz = 1.9;
+    const px = ox.x + Math.cos(theta) * rx;
+    const pz = ox.z + Math.sin(theta) * rz;
+    const vx = -Math.sin(theta) * rx;
+    const vz = Math.cos(theta) * rz;
+    ox.team.position.set(px, paddyWaterLevels[ox.index], pz);
+    ox.team.rotation.y = Math.atan2(-vx, -vz);
     ox.team.visible = active;
     ox.oxen.forEach((animal) =>
       animal.legs.forEach(
@@ -9974,23 +10594,27 @@ const animate = () => {
     const cartDelta = gameStarted ? delta : 0;
     if (vehicle.delivery && vehicle.farm && vehicle.market) {
       const wasDelivered = vehicle.delivery.delivered;
+      const wantsToMove =
+        vehicle.delivery.phase === "market" || vehicle.delivery.phase === "return";
+      const stepSpeed = computeKalavandiStepSpeed(
+        vehicle,
+        KALAVANDI_CRUISE_SPEED,
+        wantsToMove,
+        cartDelta,
+        kalavandiSampler,
+      );
       const movement = advanceFarmDelivery(
         vehicle.delivery,
         vehicle.walker,
         dayState.hour,
         cartDelta,
-        2.7,
+        stepSpeed,
         vehicle.farm,
         vehicle.market,
         villagePaths.findPath,
       );
       vehicle.parked = movement.parked;
       vehicle.group.visible = !movement.parked;
-      vehicle.group.position.set(
-        vehicle.walker.x,
-        terrainHeight(vehicle.walker.x, vehicle.walker.z),
-        vehicle.walker.z,
-      );
       vehicle.stride += movement.traveled * 4;
       if (movement.traveled > 0) {
         const facing = Math.atan2(-movement.directionX, -movement.directionZ);
@@ -10001,19 +10625,14 @@ const animate = () => {
           ) *
           (1 - Math.exp(-5 * cartDelta));
       }
-      vehicle.wheels.forEach((wheel) =>
-        wheel.rotateZ(-movement.traveled / 0.66),
-      );
-      vehicle.horseLegs.forEach(
-        (leg, index) =>
-          (leg.rotation.x = THREE.MathUtils.damp(
-            leg.rotation.x,
-            movement.traveled > 0
-              ? Math.sin(vehicle.stride + index * Math.PI * 0.5) * 0.28
-              : 0,
-            8,
-            cartDelta,
-          )),
+      updateKalavandiPhysics(
+        vehicle,
+        vehicle.walker.x,
+        vehicle.walker.z,
+        movement.traveled,
+        cartDelta,
+        kalavandiSampler,
+        reducedMotion.matches,
       );
       if (vehicle.produce) vehicle.produce.visible = vehicle.delivery.loaded;
       if (vehicle.delivery.delivered > wasDelivered) {
@@ -10068,18 +10687,19 @@ const animate = () => {
         vehicle.wait = 3;
       }
     }
+    const wantsToMove = vehicle.wait <= 0 && !vehicle.parked;
+    const stepSpeed = computeKalavandiStepSpeed(
+      vehicle,
+      KALAVANDI_CRUISE_SPEED,
+      wantsToMove,
+      cartDelta,
+      kalavandiSampler,
+    );
     const movement = advanceWalker(
       vehicle.walker,
-      vehicle.wait > 0 || vehicle.parked
-        ? 0
-        : cartDelta * Math.max(2, vehicle.speed * vehicle.route.getLength()),
+      wantsToMove ? cartDelta * stepSpeed : 0,
     );
     vehicle.stride += movement.traveled * 4;
-    vehicle.group.position.set(
-      vehicle.walker.x,
-      terrainHeight(vehicle.walker.x, vehicle.walker.z),
-      vehicle.walker.z,
-    );
     if (movement.traveled > 0) {
       const facing = Math.atan2(-movement.directionX, -movement.directionZ);
       vehicle.group.rotation.y +=
@@ -10089,34 +10709,30 @@ const animate = () => {
         ) *
         (1 - Math.exp(-5 * cartDelta));
     }
-    vehicle.wheels.forEach((wheel) => wheel.rotateZ(-movement.traveled / 0.66));
-    vehicle.horse.position.y =
-      movement.traveled > 0 && !reducedMotion.matches
-        ? Math.abs(Math.sin(vehicle.stride)) * 0.025
-        : 0;
-    vehicle.horseLegs.forEach((leg, index) => {
-      leg.rotation.x = THREE.MathUtils.damp(
-        leg.rotation.x,
-        movement.traveled > 0
-          ? Math.sin(vehicle.stride + index * Math.PI * 0.5) * 0.28
-          : 0,
-        8,
-        cartDelta,
-      );
-    });
+    updateKalavandiPhysics(
+      vehicle,
+      vehicle.walker.x,
+      vehicle.walker.z,
+      movement.traveled,
+      cartDelta,
+      kalavandiSampler,
+      reducedMotion.matches,
+    );
   }
-  world.dataset.carts = JSON.stringify(
-    vehicles
-      .filter((v) => v !== landlordCart)
-      .map((v) => ({
-        parked: v.parked,
-        x: v.walker.x,
-        z: v.walker.z,
-        phase: v.delivery?.phase,
-        delivered: v.delivery?.delivered,
-        loaded: v.delivery?.loaded,
-      })),
-  );
+  if (shouldSyncDataset) {
+    world.dataset.carts = JSON.stringify(
+      vehicles
+        .filter((v) => v !== landlordCart)
+        .map((v) => ({
+          parked: v.parked,
+          x: v.walker.x,
+          z: v.walker.z,
+          phase: v.delivery?.phase,
+          delivered: v.delivery?.delivered,
+          loaded: v.delivery?.loaded,
+        })),
+    );
+  }
   for (const relic of relics) {
     if (!relic.collected) {
       relic.group.position.y =
@@ -10181,16 +10797,19 @@ const animate = () => {
     }
   }
   const nightLight = 1 - dayState.daylight;
-  world.dataset.templeVisitors = String(
-    templeWorshippers.filter((person) => person.actor.working).length +
-      (lordPraying ? 1 : 0),
-  );
+  if (shouldSyncDataset) {
+    world.dataset.templeVisitors = String(
+      templeWorshippers.filter((person) => person.actor.working).length +
+        (lordPraying ? 1 : 0),
+    );
+  }
   const visibleLights: {
     position: THREE.Vector3;
     distance: number;
     intensity: number;
   }[] = [];
   for (const { prop, owner, arm, index } of carriedLights) {
+    if (!ENABLE_LEGACY_NPCS && owner !== player) continue;
     let visible = owner.visible;
     for (let parent = owner.parent; parent; parent = parent.parent)
       visible = visible && parent.visible;
@@ -10217,8 +10836,9 @@ const animate = () => {
     light.intensity = source && source.distance < 25 ? source.intensity : 0;
     if (source) light.position.copy(source.position);
   });
-  world.dataset.nightLights = String(visibleLights.length);
+  if (shouldSyncDataset) world.dataset.nightLights = String(visibleLights.length);
   rainUmbrellas.forEach(({ owner, umbrella, kind, arm }) => {
+    if (!ENABLE_LEGACY_NPCS && owner !== player) return;
     const climbing = coconutHarvesters.some(
       (harvester) =>
         harvester.person.figure === owner &&
@@ -10256,16 +10876,18 @@ const animate = () => {
       );
     }
   });
-  world.dataset.umbrellas = String(
-    rainUmbrellas.filter(
-      (entry) => entry.kind === "umbrella" && entry.umbrella.visible,
-    ).length,
-  );
-  world.dataset.rainLeaves = String(
-    rainUmbrellas.filter(
-      (entry) => entry.kind === "leaf" && entry.umbrella.visible,
-    ).length,
-  );
+  if (shouldSyncDataset) {
+    world.dataset.umbrellas = String(
+      rainUmbrellas.filter(
+        (entry) => entry.kind === "umbrella" && entry.umbrella.visible,
+      ).length,
+    );
+    world.dataset.rainLeaves = String(
+      rainUmbrellas.filter(
+        (entry) => entry.kind === "leaf" && entry.umbrella.visible,
+      ).length,
+    );
+  }
   advanceEquipment(equipment, gameStarted ? delta : 0);
   for (const kind of ["bow", "sword", "shield"] as const)
     heldEquipment[kind].visible =
@@ -10296,12 +10918,16 @@ const animate = () => {
       practiceArrows.splice(index, 1);
     }
   }
-  world.dataset.equipment = JSON.stringify(equipment);
-  document.querySelector("#equipment-status")!.textContent =
-    `F · ${equipment.selected === "none" ? "Equipment: none" : KALARI_GOODS[equipment.selected].label} · R to use${nearestBoard() ? " · L translate board" : ""}`;
-  world.dataset.rabbits = String(
-    ambientAnimals.filter((a) => a.species === "rabbit").length,
-  );
+  if (elapsed - lastHudMetaUpdate > 0.25) {
+    lastHudMetaUpdate = elapsed;
+    world.dataset.equipment = JSON.stringify(equipment);
+    equipmentStatusEl.textContent =
+      `F · ${equipment.selected === "none" ? "Equipment: none" : KALARI_GOODS[equipment.selected].label} · R to use${nearestBoard() ? " · L translate board" : ""}`;
+    world.dataset.rabbits = String(
+      ambientAnimals.filter((a) => a.species === "rabbit").length,
+    );
+    world.dataset.toddy = JSON.stringify(toddyState);
+  }
   if (
     openShop &&
     ((openShop === "kalari" && !nearbyKalariShop()) ||
@@ -10312,35 +10938,33 @@ const animate = () => {
   const wasNauseous = toddyState.nausea > 0;
   advanceToddy(toddyState, gameStarted ? delta : 0);
   if (wasNauseous && toddyState.nausea === 0) {
-    document.querySelector("#food-status")!.textContent =
+    foodStatusEl.textContent =
       "Nausea passed · Still recovering from toddy";
   }
-  world.dataset.toddy = JSON.stringify(toddyState);
-  document
-    .querySelector(".world-vignette")!
-    .classList.toggle(
-      "tipsy",
-      toddyState.level > 0.3 && !reducedMotion.matches,
-    );
+  const isTipsy = toddyState.level > 0.3 && !reducedMotion.matches;
+  if (isTipsy !== lastTipsyState) {
+    lastTipsyState = isTipsy;
+    worldVignetteEl.classList.toggle("tipsy", isTipsy);
+  }
   if (toddyState.nausea > 0) {
     playerVisual.rotation.x = 0.5;
-    document.querySelector("#food-status")!.textContent =
+    foodStatusEl.textContent =
       "Feeling sick · Resting (non-graphic retching)";
   }
   const distance = horseMode === "ridden" ? 9.5 : 7.4;
   const horizontalDistance = Math.cos(pitch) * distance;
-  const desiredCamera = new THREE.Vector3(
+  desiredCameraVec.set(
     playerState.x + Math.sin(yaw) * horizontalDistance,
     playerState.y +
       (horseMode === "ridden" ? 3.35 : 2.1) +
       Math.sin(pitch) * distance,
     playerState.z + Math.cos(yaw) * horizontalDistance,
   );
-  desiredCamera.y = Math.max(
-    desiredCamera.y,
-    terrainHeight(desiredCamera.x, desiredCamera.z) + 1.2,
+  desiredCameraVec.y = Math.max(
+    desiredCameraVec.y,
+    terrainHeight(desiredCameraVec.x, desiredCameraVec.z) + 1.2,
   );
-  camera.position.lerp(desiredCamera, 1 - Math.exp(-5 * delta));
+  camera.position.lerp(desiredCameraVec, 1 - Math.exp(-5 * delta));
   camera.lookAt(
     playerState.x,
     playerState.y + (horseMode === "ridden" ? 2.4 : 1.15),
@@ -10350,6 +10974,13 @@ const animate = () => {
     camera.rotateZ(
       Math.sin(elapsed * 1.3) * Math.min(0.025, toddyState.level * 0.012),
     );
+  rdr2GradePass.uniforms.uDaylight.value = dayState.daylight;
+  rdr2GradePass.uniforms.uTwilight.value = dayState.twilight;
+  renderFrameCount++;
+  if (renderFrameCount % 2 === 0 || !gameStarted) {
+    renderer.shadowMap.needsUpdate = true;
+  }
+  if (shouldSyncDataset) lastDatasetSync = elapsed;
   if (realisticGraphics) composer.render(delta);
   else renderer.render(scene, camera);
 };

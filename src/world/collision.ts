@@ -127,16 +127,16 @@ export function obstacleDetour(
   solids: readonly Solid[],
   radius = 0.4,
 ): Point2[] {
-  if (segmentClear(start, target, solids, radius)) return [target];
-  if (solids.some((s) => insideSolid(s, target[0], target[1], radius)))
-    return [];
+  const safeStart = clearStandingPoint(start, solids, radius + 0.02);
+  const safeTarget = clearStandingPoint(target, solids, radius + 0.02);
+  if (segmentClear(safeStart, safeTarget, solids, radius)) return [safeTarget];
   const nearby = solids.filter(
     (s) =>
-      Math.hypot(s.x - start[0], s.z - start[1]) +
-        Math.hypot(s.x - target[0], s.z - target[1]) <
-      Math.hypot(target[0] - start[0], target[1] - start[1]) + 25,
+      Math.hypot(s.x - safeStart[0], s.z - safeStart[1]) +
+        Math.hypot(s.x - safeTarget[0], s.z - safeTarget[1]) <
+      Math.hypot(safeTarget[0] - safeStart[0], safeTarget[1] - safeStart[1]) + 25,
   );
-  const points: Point2[] = [start, target];
+  const points: Point2[] = [safeStart, safeTarget];
   for (const solid of nearby)
     for (const x of [-1, 1])
       for (const z of [-1, 1]) {
