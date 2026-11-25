@@ -1,0 +1,9 @@
+# Prevent GitHub Compare / PR views from timing out on giant 3D model JSON & binary diffs
+*.gltf linguist-generated=true -diff
+*.glb binary -diff
+*.fbx binary -diff
+*.bin binary -diff
+*.png binary -diff
+*.jpg binary -diff
+*.jpeg binary -diff
+*.webp binary -diff
